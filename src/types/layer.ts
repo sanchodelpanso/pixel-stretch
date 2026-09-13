@@ -25,6 +25,8 @@ export interface Layer {
   /**
    * Set on an automatically lifted subject. Subsequent stretches from the
    * same source reuse this layer instead of creating duplicate cutouts.
+   * Compositing feathers its alpha inward; `canvas` retains the original
+   * pixels so project round trips do not repeatedly soften the edge.
    */
   protectionSourceId?: string;
   /**

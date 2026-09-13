@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { LayerDocument } from '../types/layer';
+import { drawDocumentLayers } from '../layers/compositor';
 
 interface LayerCanvasProps {
   doc: LayerDocument;
@@ -56,12 +57,7 @@ export function LayerCanvas({ doc, viewWidth, viewHeight }: LayerCanvasProps) {
       ctx.imageSmoothingQuality = 'high';
 
       // Composite without clearing — the checkerboard must show through.
-      for (const layer of doc.layers) {
-        if (!layer.visible || layer.opacity <= 0) continue;
-        ctx.globalAlpha = layer.opacity;
-        ctx.drawImage(layer.canvas, layer.x, layer.y);
-      }
-      ctx.globalAlpha = 1;
+      drawDocumentLayers(ctx, doc);
     });
 
     return () => cancelAnimationFrame(rafRef.current);

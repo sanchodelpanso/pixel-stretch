@@ -1,5 +1,17 @@
 import type { LayerDocument } from '../types/layer';
 import { createCanvas } from './layer-utils';
+import { subjectBlendCanvas } from './subject-blend';
+
+/** Shared by the checkerboard preview and full-resolution export. */
+export function drawDocumentLayers(ctx: CanvasRenderingContext2D, doc: LayerDocument): void {
+  ctx.save();
+  for (const layer of doc.layers) {
+    if (!layer.visible || layer.opacity <= 0) continue;
+    ctx.globalAlpha = layer.opacity;
+    ctx.drawImage(subjectBlendCanvas(layer, doc), layer.x, layer.y);
+  }
+  ctx.restore();
+}
 
 /**
  * Draw the layer stack into a 2D context, bottom layer first.
@@ -11,11 +23,7 @@ export function compositeDocument(
 ): void {
   ctx.save();
   ctx.clearRect(0, 0, doc.width, doc.height);
-  for (const layer of doc.layers) {
-    if (!layer.visible || layer.opacity <= 0) continue;
-    ctx.globalAlpha = layer.opacity;
-    ctx.drawImage(layer.canvas, layer.x, layer.y);
-  }
+  drawDocumentLayers(ctx, doc);
   ctx.restore();
 }
 

@@ -19,6 +19,11 @@ Open the printed localhost URL and choose a JPEG, PNG, WebP, or HEIC photo. The 
 - **Copy / Cut to new layer:** extracts the selection. Hide the Background layer before exporting a transparent cutout.
 - **Stretch:** draw a sample path, shape and lock it, then drag to pull out a band.
 
+Automatically lifted subjects use a narrow inward feather to blend their edges
+into the stretch while retaining sharp interior detail. Preview and PNG export
+share this blending, including for reopened projects. The original layer pixels
+remain in the project, so saving and reopening never compounds the feather.
+
 Click an active selection tool again to restart or retry it. Escape clears the selection and returns to Move. Undo/redo supports Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z.
 
 ## Selection implementation
