@@ -3,7 +3,7 @@ import type { StretchSpec, Point } from '../types/stretch';
 import type { EdgeWarp } from '../types/stretch';
 import {
   rectBasis, rectCenter, anchorForCentre, chordAngle,
-  toEdgeOffset, isWarped, edgeCurves, pullCorner, NO_EDGE_WARP,
+  toEdgeOffset, isWarped, edgeCurves, pullCorner, skewCorner, NO_EDGE_WARP,
 } from '../types/stretch';
 import { bendPoint } from '../rendering/projection';
 import { bandSurface } from '../rendering/surface';
@@ -118,7 +118,12 @@ export function StretchRectHandles({
     }
 
     if (drag.kind === 'warp') {
-      onChange(pullCorner(spec, drag.corner, point), true);
+      onChange(
+        spec.warpMode === 'curved'
+          ? pullCorner(spec, drag.corner, point)
+          : skewCorner(spec, drag.corner, point),
+        true,
+      );
       return;
     }
 
@@ -370,10 +375,17 @@ export function StretchRectHandles({
         onPointerDown={(e) => {
           e.stopPropagation();
           e.preventDefault();
-          onChange({ warpMode: curvedMode ? 'straight' : 'curved' }, false);
+          onChange({
+            warpMode: curvedMode ? 'straight' : 'curved',
+            // Enter either shape mode on a flat 2D surface. The dedicated
+            // canvas depth grip can still add the cylindrical effect directly.
+            bend: 0,
+          }, false);
         }}
       >
-        <title>{curvedMode ? 'Curved edges — click for straight' : 'Straight edges — click for curved'}</title>
+        <title>{curvedMode
+          ? 'Curved shape — click for straight 2D skew'
+          : 'Straight 2D skew — click for curved wave controls'}</title>
         <rect x={0} y={0} width={28} height={28} rx={7} />
         <g transform="translate(6, 7)" className="rect-mode-glyph">
           {curvedMode

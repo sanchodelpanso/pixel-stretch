@@ -5,8 +5,6 @@ import { chordAngle, isWarped, hasCurvedEdges, NO_WARP, NO_EDGE_WARP } from '../
 import { toRadians } from '../utils/math-utils';
 import { pathToPolyline, polylineLength } from '../rendering/sample-path';
 import { toDegrees } from '../utils/math-utils';
-import { bendPreset } from '../types/stretch-presets';
-import type { BendPreset } from '../types/stretch-presets';
 import './StretchPanel.css';
 
 interface StretchPanelProps {
@@ -78,10 +76,6 @@ export function StretchPanel({
     onChange({ length: -spec.length }, false);
   }, [spec.length, onChange]);
 
-  const applyPreset = useCallback((preset: BendPreset) => {
-    onChange(bendPreset(spec, preset), false);
-  }, [spec, onChange]);
-
   return (
     <section className="panel-section stretch-section">
       <div className="panel-section-title">
@@ -96,7 +90,10 @@ export function StretchPanel({
           <span>Rectangle turned {Math.round(toDegrees(spec.rotation))}° off the path</span>
         )}
         {spec.warpMode === 'curved' && (
-          <span>Curved edges · drag the round handles to shape the bend</span>
+          <span>Curved shape · round handles make a flat wave · corners keep the fold effect</span>
+        )}
+        {spec.warpMode !== 'curved' && isWarped(spec) && (
+          <span>2D skew · drag any corner while the edges are straight</span>
         )}
         {sourceName ? (
           <span>from {sourceName}</span>
@@ -121,26 +118,6 @@ export function StretchPanel({
         label="Rotate" value={Math.round(toDegrees(spec.rotation))} min={-180} max={180} step={1}
         format={(v) => `${Math.round(v)}°`}
         onInput={(v, t) => onChange({ rotation: toRadians(v) }, t)}
-        onBeginEdit={onBeginEdit}
-      />
-      <div className="bend-controls">
-        <div className="bend-controls-heading">
-          <strong>3D Bend</strong>
-          <span>Drag a corner to bend the sheet like paper. The other three corners stay pinned; the round handles then shape the bend.</span>
-        </div>
-        <div className="bend-presets" role="group" aria-label="3D bend presets">
-          <button onClick={() => applyPreset('flat')}>Flat</button>
-          <button onClick={() => applyPreset('cylinder')}>Cylinder</button>
-          <button onClick={() => applyPreset('arc-left')}>Arc left</button>
-          <button onClick={() => applyPreset('arc-right')}>Arc right</button>
-          <button onClick={() => applyPreset('s-curve')}>S curve</button>
-          <button onClick={() => applyPreset('taper')}>Taper</button>
-        </div>
-      </div>
-      <Slider
-        label="Wrap" value={spec.bend} min={-2} max={2} step={0.01}
-        format={(v) => (v === 0 ? 'flat' : `${(1 / Math.abs(v)).toFixed(1)}×W`)}
-        onInput={(v, t) => onChange({ bend: v }, t)}
         onBeginEdit={onBeginEdit}
       />
       <Slider
@@ -169,7 +146,7 @@ export function StretchPanel({
           disabled={!isWarped(spec) && spec.bend === 0 && !hasCurvedEdges(spec)}
           onClick={() => onChange({ warp: NO_WARP, edges: NO_EDGE_WARP, bend: 0 }, false)}
         >
-          Reset 3D
+          Reset shape
         </button>
       </div>
     </section>

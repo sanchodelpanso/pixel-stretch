@@ -126,7 +126,11 @@ struct EditorScreen: View {
                 .accessibilityLabel("Edit path")
             let curved = spec.warpMode == .curved
             chip("Curved", systemImage: "point.bottomleft.forward.to.point.topright.scurvepath", showTitle: showTitles, fill: curved ? Theme.accentPurple : Color.white.opacity(0.1)) {
-                model.changeStretch(transient: false) { $0.warpMode = curved ? .straight : .curved }
+                model.changeStretch(transient: false) {
+                    $0.warpMode = curved ? .straight : .curved
+                    $0.bend = 0
+                    $0.curlCorner = nil
+                }
             }
             .accessibilityLabel("Curved edges")
             .accessibilityAddTraits(curved ? .isSelected : [])

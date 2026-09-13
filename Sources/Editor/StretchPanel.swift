@@ -26,7 +26,10 @@ struct StretchPanel: View {
                         Text("Bend and distort · the other corners stay pinned")
                     }
                     if spec.warpMode == .curved && spec.curlCorner == nil {
-                        Text("Curved edges · drag the purple controls to shape them")
+                        Text("Curved shape · purple controls make a flat 2D wave")
+                    }
+                    if spec.warpMode != .curved && spec.isWarped {
+                        Text("2D skew · drag any corner while the edges are straight")
                     }
                     if let sourceName {
                         Text(verbatim: "from \(sourceName)")
@@ -61,7 +64,7 @@ struct StretchPanel: View {
                     }
                     .disabled(spec.rotation == 0)
                     Spacer()
-                    Button("Reset 3D") {
+                    Button("Reset shape") {
                         model.changeStretch(transient: false) { spec in
                             spec.warp = noWarp
                             spec.edges = noEdgeWarp
@@ -84,12 +87,6 @@ struct StretchPanel: View {
                 }
                 slider("Rotate", value: Double(jsRound(degrees(spec.rotation))), range: -180...180, step: 1, format: { "\(jsRound($0))°" }) { spec, value in
                     spec.rotation = value * .pi / 180
-                }
-                slider("Wrap", value: spec.bend, range: -2...2, step: 0.01, format: {
-                    $0 == 0 ? "flat" : String(format: "R %.1f×W", 1 / abs($0))
-                }) { spec, value in
-                    spec.bend = value
-                    spec.curlCorner = nil
                 }
                 slider("Fade", value: spec.fade, range: 0...1, step: 0.01, format: { "\(jsRound($0 * 100))%" }) { spec, value in
                     spec.fade = value

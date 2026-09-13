@@ -19,7 +19,8 @@ export const NO_WARP: Warp = [
  * How the band's edges are drawn.
  * `straight` keeps every edge a straight line and renders through a true
  * perspective homography; `curved` makes each edge a cubic Bézier and renders
- * the free-form sheet they bound. Pulling a corner always switches to `curved`.
+ * the free-form sheet they bound. Corner dragging respects the selected mode:
+ * straight mode skews in 2D, while curved mode keeps the page-fold gesture.
  */
 export type WarpMode = 'straight' | 'curved';
 
@@ -242,6 +243,23 @@ export function pullCorner(
     ];
   }
   return { warp, edges, warpMode: 'curved' };
+}
+
+/**
+ * Move one corner as an ordinary flat quadrilateral edit.
+ *
+ * This deliberately keeps the straight-edge mode and clears cylindrical depth,
+ * so a corner drag is a 2D skew/perspective transform rather than a page fold.
+ * Stored Bézier controls are left alone and return if curved mode is re-enabled.
+ */
+export function skewCorner(
+  spec: StretchSpec,
+  corner: number,
+  target: Point,
+): Pick<StretchSpec, 'warp' | 'warpMode' | 'bend'> {
+  const warp = (spec.warp ?? NO_WARP).map((offset) => ({ ...offset })) as Warp;
+  warp[corner] = toWarpOffset(spec, corner, target);
+  return { warp, warpMode: 'straight', bend: 0 };
 }
 
 /** Whether the band is distorted away from a plain rectangle. */

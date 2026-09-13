@@ -4,8 +4,9 @@ import SwiftUI
 /// the rectangle's own rotated frame, a rotate grip, curved-edge controls, and
 /// the body itself.
 ///
-/// Corner handles turn the sheet through a rounded page fold. Edge handles
-/// resize, while existing free-form surfaces retain their Bézier controls.
+/// In straight mode corner handles skew a flat quadrilateral. In curved mode
+/// they retain the rounded page fold. Edge handles resize, while the purple
+/// controls shape a free-form 2D Bézier surface.
 @MainActor
 enum RectEditing {
     enum Handle: CaseIterable {
@@ -191,16 +192,21 @@ enum RectEditing {
             grab.kind = .move(last: point)
 
         case .warp(let corner):
-            // Keep the other three corner targets fixed while this one bends
-            // and distorts the sheet.
             model.changeStretch(transient: true) { spec in
                 var warp = spec.warp ?? noWarp
                 warp[corner] = spec.toWarpOffset(corner: corner, target: point)
                 spec.warp = warp
-                spec.edges = noEdgeWarp
-                spec.curlCorner = corner
-                spec.warpMode = .curved
-                spec.bend = 0
+                if spec.warpMode == .curved {
+                    // Keep the existing localized page-fold gesture in curved mode.
+                    spec.edges = noEdgeWarp
+                    spec.curlCorner = corner
+                    spec.bend = 0
+                } else {
+                    // Straight edges are an ordinary flat 2D skew/perspective edit.
+                    spec.curlCorner = nil
+                    spec.warpMode = .straight
+                    spec.bend = 0
+                }
             }
 
         case .edge(let edge, let control):

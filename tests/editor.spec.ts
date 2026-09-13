@@ -15,6 +15,45 @@ async function waitSelection(page: import('@playwright/test').Page) {
   await expect(page.getByRole('button', { name: 'Copy to new layer' })).toBeVisible();
 }
 
+async function openSyntheticStretch(page: import('@playwright/test').Page) {
+  const project = JSON.parse(await readFile(path.resolve('PixelStretch.pixelstretch'), 'utf8'));
+  const source = project.layers[0];
+  const stretchId = 'browser-test-stretch';
+  project.selectedLayerId = stretchId;
+  project.layers.push({
+    id: stretchId,
+    name: '2D shape test',
+    width: 400,
+    height: 400,
+    x: 150,
+    y: 300,
+    visible: true,
+    opacity: 1,
+    locked: false,
+    bitmap: source.bitmap,
+    stretch: {
+      points: [{ x: 150, y: 300 }, { x: 550, y: 300 }],
+      sourceLayerId: source.id,
+      anchor: { x: 150, y: 300 },
+      width: 400,
+      length: -400,
+      rotation: 0,
+      fade: 0,
+      edgeSoftness: 0,
+      bend: 0,
+    },
+  });
+
+  await page.goto('/');
+  await page.locator('input[accept*=".pixelstretch"]').setInputFiles({
+    name: 'shape-test.pixelstretch',
+    mimeType: 'application/vnd.pixelstretch.project+json',
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await page.getByRole('button', { name: 'Stretch', exact: true }).click();
+  await expect(page.locator('.stretch-rect-handles')).toBeVisible();
+}
+
 test('opening a photo does not download models; HEIC preserves full resolution', async ({ page }) => {
   const requests: string[] = [];
   page.on('request', (request) => { if (request.url().includes('huggingface.co')) requests.push(request.url()); });
@@ -129,37 +168,49 @@ test('project save and reopen preserves layers and stretch geometry', async ({ p
   await expect(page.locator('.layer-row')).toHaveCount(3);
 
   const widthBeforeCornerDrag = Number(await page.getByLabel('Width').inputValue());
-  // Pull the top-right corner inward: it bends the sheet without resizing it,
-  // and every edge's handles appear so the bend can be reshaped.
+  await expect(page.getByLabel('Wrap')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Arc right', exact: true })).toHaveCount(0);
+
+  // Straight mode keeps a corner drag as an ordinary 2D skew. It does not
+  // resize the source rectangle or expose the curved-surface controls.
   const corner = page.locator('.rect-handle').nth(2);
   const cornerBox = (await corner.boundingBox())!;
   await page.mouse.move(cornerBox.x + cornerBox.width / 2, cornerBox.y + cornerBox.height / 2);
   await page.mouse.down();
   await page.mouse.move(cornerBox.x - 70, cornerBox.y + 60, { steps: 8 });
   await page.mouse.up();
-  await expect(page.getByLabel('Wrap')).toHaveValue('0');
   await expect(page.getByLabel('Width')).toHaveValue(String(widthBeforeCornerDrag));
   await expect(page.locator('.rect-outline.warped')).toBeVisible();
-  await expect(page.locator('.edge-control')).toHaveCount(8);
+  await expect(page.locator('.edge-control')).toHaveCount(0);
   await expect(page.locator('.rect-grid path')).toHaveCount(4);
-  await mkdir('artifacts/segmentation', { recursive: true });
-  await page.screenshot({ path: 'artifacts/segmentation/pisa-corner-bend.png' });
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
-  await expect(page.getByLabel('Wrap')).toHaveValue('0');
   await expect(page.locator('.edge-control')).toHaveCount(0);
   await expect(page.locator('.rect-grid path')).toHaveCount(4);
 
-  await page.getByRole('button', { name: 'Arc right', exact: true }).click();
+  // Curved mode starts flat and exposes the 2D Bézier controls. Pulling a
+  // corner in this mode retains the existing localized paper-fold gesture.
+  await page.locator('.rect-mode').dispatchEvent('pointerdown', { pointerId: 2 });
   await expect(page.locator('.edge-control')).toHaveCount(8);
-  const depthHandle = page.locator('.bend-depth.active');
+  const curvedCorner = page.locator('.rect-handle').nth(2);
+  const curvedCornerBox = (await curvedCorner.boundingBox())!;
+  await page.mouse.move(curvedCornerBox.x + curvedCornerBox.width / 2, curvedCornerBox.y + curvedCornerBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(curvedCornerBox.x - 70, curvedCornerBox.y + 60, { steps: 8 });
+  await page.mouse.up();
+  await expect(page.locator('.edge-control')).toHaveCount(8);
+  await mkdir('artifacts/segmentation', { recursive: true });
+  await page.screenshot({ path: 'artifacts/segmentation/pisa-corner-bend.png' });
+
+  // The direct canvas grip still adds cylindrical 3D depth even though its
+  // duplicate presets and side-panel slider have been removed.
+  const depthHandle = page.locator('.bend-depth');
   await expect(depthHandle).toBeVisible();
-  const depthBefore = Number(await page.getByLabel('Wrap').inputValue());
   const depthBox = (await depthHandle.boundingBox())!;
   await page.mouse.move(depthBox.x + depthBox.width / 2, depthBox.y + depthBox.height / 2);
   await page.mouse.down();
   await page.mouse.move(depthBox.x + depthBox.width / 2, depthBox.y + depthBox.height / 2 + 12, { steps: 5 });
   await page.mouse.up();
-  await expect.poll(async () => Number(await page.getByLabel('Wrap').inputValue())).toBeGreaterThan(depthBefore);
+  await expect(depthHandle).toHaveClass(/active/);
   await mkdir('artifacts/segmentation', { recursive: true });
   await page.screenshot({ path: 'artifacts/segmentation/pisa-protected-stretch.png' });
   await page.locator('.layer-row').filter({ has: page.locator('.layer-name', { hasText: /^Background$/ }) }).getByTitle('Hide layer').click();
@@ -206,6 +257,33 @@ test('invalid project files show a useful error', async ({ page }) => {
     buffer: Buffer.from('{"format":"wrong"}'),
   });
   await expect(page.locator('.upload-error')).toHaveText('This file is not a PixelStretch project.');
+});
+
+test('straight corners skew in 2D and curved controls start as a flat wave surface', async ({ page }) => {
+  await openSyntheticStretch(page);
+  await expect(page.getByLabel('Wrap')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Arc right', exact: true })).toHaveCount(0);
+
+  const corner = page.locator('.rect-handle').nth(2);
+  const box = (await corner.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x - 45, box.y + 35, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.locator('.rect-outline.warped')).toBeVisible();
+  await expect(page.locator('.edge-control')).toHaveCount(0);
+
+  await page.locator('.rect-mode').dispatchEvent('pointerdown', { pointerId: 3 });
+  await expect(page.locator('.edge-control')).toHaveCount(8);
+  await expect(page.locator('.rect-mode title')).toHaveText('Curved shape — click for straight 2D skew');
+
+  const control = page.locator('.edge-control').first();
+  const controlBox = (await control.boundingBox())!;
+  await page.mouse.move(controlBox.x + controlBox.width / 2, controlBox.y + controlBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(controlBox.x + 25, controlBox.y - 20, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.getByText(/round handles make a flat wave/i)).toBeVisible();
 });
 
 test('mobile editor uses a touch toolbar and layers sheet without horizontal overflow', async ({ page }) => {

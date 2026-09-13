@@ -500,7 +500,9 @@ export function EditorScreen({ source }: EditorScreenProps) {
       ? 'Drag away from the path to pull the band out'
       : 'Drag the hollow midpoints to bend the path · double-click a point to remove it · 🔒 to lock'
     : stretchSpec
-      ? 'Drag a corner to bend the sheet · the round handles shape the bend'
+      ? stretchSpec.warpMode === 'curved'
+        ? 'Round handles make a 2D wave · corner handles keep the fold effect'
+        : 'Drag a corner to skew the rectangle in 2D · use the curve button for waves'
       : TOOL_HINTS.stretch;
 
   const busy = seg.isModelLoading || seg.isProcessing;

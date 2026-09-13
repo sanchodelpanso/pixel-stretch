@@ -93,8 +93,10 @@ final class EditorModel: Identifiable {
                     ? "Drag away from the path to pull the band out"
                     : "Drag the hollow midpoints to bend the path · double-tap a point to remove it · Lock when done"
             }
-            if selectedStretch != nil {
-                return "Drag a corner to bend and distort · the other corners stay pinned"
+            if let stretch = selectedStretch {
+                return stretch.warpMode == .curved
+                    ? "Purple handles make a 2D wave · corner handles keep the fold effect"
+                    : "Drag a corner to skew the rectangle in 2D · use Curved for waves"
             }
             return "Drag a line across the layer to choose which pixels to sample"
         }

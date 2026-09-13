@@ -9,3 +9,6 @@ dist/
 test-results/
 playwright-report/
 artifacts/segmentation/
+
+# orch: runs, prompts, code excerpts and the index stay local
+.orch/

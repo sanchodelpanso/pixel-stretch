@@ -4,6 +4,7 @@ import {
   bandCorners,
   edgeCurves,
   pullCorner,
+  skewCorner,
   warpedCorners,
   type Point,
   type StretchSpec,
@@ -77,6 +78,24 @@ test('pulling from a straight band starts from its visible edges, not stale cont
   const far = bandCorners(spec)[2];
   const bent = { ...stale, ...pullCorner(stale, 2, { x: far.x - 10, y: far.y }) };
   assert.deepEqual(bent.edges?.[0], [{ u: 0, v: 0 }, { u: 0, v: 0 }]);
+});
+
+test('straight-mode corner dragging stays a flat 2D skew', () => {
+  const original = bandCorners(spec);
+  const target = { x: original[2].x - 70, y: original[2].y + 35 };
+  const skewed = { ...spec, ...skewCorner({ ...spec, bend: 1 }, 2, target) };
+
+  assert.equal(skewed.warpMode, 'straight');
+  assert.equal(skewed.bend, 0);
+  assertNear(warpedCorners(skewed)[2], target);
+  for (const index of [0, 1, 3]) assertNear(warpedCorners(skewed)[index], original[index]);
+  const top = bandSurface(skewed)(0.5, 0);
+  const topVector = {
+    x: original[1].x - original[0].x,
+    y: original[1].y - original[0].y,
+  };
+  const cross = topVector.x * (top.y - original[0].y) - topVector.y * (top.x - original[0].x);
+  assert.ok(Math.abs(cross) < 1e-9, 'the skewed top edge remains a straight line');
 });
 
 /** The bilinearly blended Coons patch the curved presets were designed against. */
