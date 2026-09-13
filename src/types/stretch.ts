@@ -1,0 +1,306 @@
+export interface Point {
+  x: number;
+  y: number;
+}
+
+/** A corner nudge, in the rectangle's own frame: `u` along, `v` outward. */
+export interface WarpOffset {
+  u: number;
+  v: number;
+}
+
+export type Warp = [WarpOffset, WarpOffset, WarpOffset, WarpOffset];
+
+export const NO_WARP: Warp = [
+  { u: 0, v: 0 }, { u: 0, v: 0 }, { u: 0, v: 0 }, { u: 0, v: 0 },
+];
+
+/**
+ * How the band's edges are drawn.
+ * `straight` keeps every edge a straight line and renders through a true
+ * perspective homography; `curved` makes each edge a cubic Bézier and renders
+ * the free-form sheet they bound. Pulling a corner always switches to `curved`.
+ */
+export type WarpMode = 'straight' | 'curved';
+
+/** The two Bézier controls of one edge, as offsets from its straight thirds. */
+export type EdgeControls = [WarpOffset, WarpOffset];
+
+/** Controls for all four edges, in c0→c1, c1→c2, c2→c3, c3→c0 order. */
+export type EdgeWarp = [EdgeControls, EdgeControls, EdgeControls, EdgeControls];
+
+export const NO_EDGE_WARP: EdgeWarp = [
+  [{ u: 0, v: 0 }, { u: 0, v: 0 }],
+  [{ u: 0, v: 0 }, { u: 0, v: 0 }],
+  [{ u: 0, v: 0 }, { u: 0, v: 0 }],
+  [{ u: 0, v: 0 }, { u: 0, v: 0 }],
+];
+
+/**
+ * A stretch band.
+ *
+ * Sampling and output geometry are deliberately independent. `points` is a
+ * path the user shapes freely — a straight line by default, a smooth spline
+ * once they bend it — but it only chooses *which* pixels are read. Those
+ * pixels are always laid out across a straight rectangle, so the streaks stay
+ * parallel however curved the path is.
+ *
+ * The rectangle lives in the frame defined by the path's chord (first point →
+ * last point): `width` runs along it, `length` extrudes at right angles to it,
+ * and `anchor` is the corner where both axes start. A negative `length` puts
+ * the band on the other side of the path.
+ */
+export interface StretchSpec {
+  /** Sample path control points, in document pixels. Two or more. */
+  points: Point[];
+  /** Layer the band samples its pixels from. */
+  sourceLayerId: string;
+  /** Rectangle corner where both local axes begin, in document pixels. */
+  anchor: Point;
+  /** Rectangle extent along the chord direction, in pixels. */
+  width: number;
+  /** Signed rectangle extent along the chord's perpendicular, in pixels. */
+  length: number;
+  /**
+   * Rectangle rotation in radians, *relative to the path's chord*. Zero keeps
+   * the band square to the path; reshaping the path then carries the rectangle
+   * with it, which is almost always what's wanted.
+   */
+  rotation: number;
+  /** 0 = solid to the far end, 1 = fully faded out at the far end. */
+  fade: number;
+  /** Edge softening, as a fraction of the band's size. */
+  edgeSoftness: number;
+  /**
+   * Per-corner distortion, stored in the rectangle's own frame so that moving,
+   * rotating or resizing the rectangle carries the distortion with it. Absent
+   * (or all zeros) means an undistorted rectangle.
+   */
+  warp?: Warp;
+  /**
+   * Cylindrical wrap about the band's length axis. At ±1 the cylinder radius
+   * equals the rectangle width; positive bows toward the viewer, negative away.
+   */
+  bend: number;
+  /** Whether edges pull straight or curve. Absent means `straight`. */
+  warpMode?: WarpMode;
+  /**
+   * Per-edge Bézier controls, stored like `warp` in the rectangle's own frame
+   * as offsets from the straight-edge thirds. Only meaningful in curved mode.
+   */
+  edges?: EdgeWarp;
+}
+
+export const DEFAULT_STRETCH = {
+  fade: 0,
+  edgeSoftness: 0,
+  rotation: 0,
+  bend: 0,
+} satisfies Pick<StretchSpec, 'fade' | 'edgeSoftness' | 'rotation' | 'bend'>;
+
+/** Straight-line distance from the path's first point to its last. */
+export function chordLength(points: Point[]): number {
+  if (points.length < 2) return 0;
+  const a = points[0];
+  const b = points[points.length - 1];
+  return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
+/** Angle of the path's chord in radians, for display. */
+export function chordAngle(points: Point[]): number {
+  if (points.length < 2) return 0;
+  const a = points[0];
+  const b = points[points.length - 1];
+  return Math.atan2(b.y - a.y, b.x - a.x);
+}
+
+/**
+ * Orthonormal basis for the band rectangle.
+ * `along` follows the path's chord; `out` is the extrusion direction for a
+ * positive length — chosen so a top-to-bottom path extrudes rightward.
+ */
+export function bandBasis(points: Point[]): { along: Point; out: Point } {
+  const extent = chordLength(points);
+  if (extent < 1e-6) return { along: { x: 1, y: 0 }, out: { x: 0, y: 1 } };
+  const a = points[0];
+  const b = points[points.length - 1];
+  const along = { x: (b.x - a.x) / extent, y: (b.y - a.y) / extent };
+  return { along, out: { x: along.y, y: -along.x } };
+}
+
+/**
+ * Basis for the band rectangle itself — the chord's, turned by the spec's own
+ * rotation. Sampling never uses this: walking the path is orientation-free, so
+ * rotating the rectangle moves where the pixels land, not which ones are read.
+ */
+export function rectBasis(spec: StretchSpec): { along: Point; out: Point } {
+  if (!spec.rotation) return bandBasis(spec.points);
+  const angle = chordAngle(spec.points) + spec.rotation;
+  const along = { x: Math.cos(angle), y: Math.sin(angle) };
+  return { along, out: { x: along.y, y: -along.x } };
+}
+
+/** The rectangle's four corners in document space, anchor first, clockwise. */
+export function bandCorners(spec: StretchSpec): [Point, Point, Point, Point] {
+  const { along, out } = rectBasis(spec);
+  const w = { x: along.x * spec.width, y: along.y * spec.width };
+  const l = { x: out.x * spec.length, y: out.y * spec.length };
+  return [
+    { x: spec.anchor.x, y: spec.anchor.y },
+    { x: spec.anchor.x + w.x, y: spec.anchor.y + w.y },
+    { x: spec.anchor.x + w.x + l.x, y: spec.anchor.y + w.y + l.y },
+    { x: spec.anchor.x + l.x, y: spec.anchor.y + l.y },
+  ];
+}
+
+/** Whether any edge has been bowed away from straight. */
+export function hasCurvedEdges(spec: StretchSpec): boolean {
+  return (
+    spec.warpMode === 'curved' &&
+    Boolean(spec.edges?.some((e) => e.some((c) => c.u !== 0 || c.v !== 0)))
+  );
+}
+
+/**
+ * The four Bézier edges of the band, in document space. Each control sits at
+ * its straight-edge third plus the stored offset, rotated into the rect frame
+ * so the curve travels with the rectangle.
+ */
+export function edgeCurves(spec: StretchSpec): [
+  [Point, Point, Point, Point], [Point, Point, Point, Point],
+  [Point, Point, Point, Point], [Point, Point, Point, Point],
+] {
+  const corners = warpedCorners(spec);
+  const { along, out } = rectBasis(spec);
+  const controls = spec.edges ?? NO_EDGE_WARP;
+
+  return corners.map((from, i) => {
+    const to = corners[(i + 1) % 4];
+    const offsets = controls[i];
+    const knot = (fraction: number, offset: WarpOffset): Point => ({
+      x: from.x + (to.x - from.x) * fraction + along.x * offset.u + out.x * offset.v,
+      y: from.y + (to.y - from.y) * fraction + along.y * offset.u + out.y * offset.v,
+    });
+    return [from, knot(1 / 3, offsets[0]), knot(2 / 3, offsets[1]), to];
+  }) as ReturnType<typeof edgeCurves>;
+}
+
+/** Express a document point as an edge-control offset in the rectangle's frame. */
+export function toEdgeOffset(
+  spec: StretchSpec,
+  edgeIndex: number,
+  controlIndex: 0 | 1,
+  target: Point,
+): WarpOffset {
+  const corners = warpedCorners(spec);
+  const from = corners[edgeIndex];
+  const to = corners[(edgeIndex + 1) % 4];
+  const fraction = controlIndex === 0 ? 1 / 3 : 2 / 3;
+  const base = {
+    x: from.x + (to.x - from.x) * fraction,
+    y: from.y + (to.y - from.y) * fraction,
+  };
+  const { along, out } = rectBasis(spec);
+  const dx = target.x - base.x;
+  const dy = target.y - base.y;
+  return { u: dx * along.x + dy * along.y, v: dx * out.x + dy * out.y };
+}
+
+/**
+ * Pull one corner to `target`, bending the band like a sheet of paper.
+ *
+ * Only that corner moves. The other three stay pinned and every edge handle
+ * stays exactly where it was, so each edge meeting the corner has to arc out
+ * to reach it: one lengthens into a curve, the other rolls over in a rounded
+ * fold. A handle only pulls its own part of the sheet, so the bend stays near
+ * the corner rather than shearing the whole band. The handles stay draggable
+ * afterwards to reshape the bend.
+ */
+export function pullCorner(
+  spec: StretchSpec,
+  corner: number,
+  target: Point,
+): Pick<StretchSpec, 'warp' | 'edges' | 'warpMode'> {
+  // A straight band ignores its stored controls, so start from the edges as
+  // they're drawn.
+  const current: StretchSpec = spec.warpMode === 'curved' ? spec : { ...spec, edges: NO_EDGE_WARP };
+  const handles = edgeCurves(current);
+
+  const warp = (current.warp ?? NO_WARP).map((offset) => ({ ...offset })) as Warp;
+  warp[corner] = toWarpOffset(current, corner, target);
+  const pulled: StretchSpec = { ...current, warp };
+
+  // Handles are stored relative to the straight line between their edge's
+  // corners, so only the two edges meeting this corner need re-expressing.
+  const edges = (current.edges ?? NO_EDGE_WARP).map((edge) => (
+    edge.map((control) => ({ ...control }))
+  )) as EdgeWarp;
+  for (const edge of [(corner + 3) % 4, corner]) {
+    edges[edge] = [
+      toEdgeOffset(pulled, edge, 0, handles[edge][1]),
+      toEdgeOffset(pulled, edge, 1, handles[edge][2]),
+    ];
+  }
+  return { warp, edges, warpMode: 'curved' };
+}
+
+/** Whether the band is distorted away from a plain rectangle. */
+export function isWarped(spec: StretchSpec): boolean {
+  return Boolean(spec.warp?.some((w) => w.u !== 0 || w.v !== 0));
+}
+
+/**
+ * The band's actual quad: the rectangle's corners with each corner's warp
+ * offset applied in the rectangle's own frame.
+ */
+export function warpedCorners(spec: StretchSpec): [Point, Point, Point, Point] {
+  const corners = bandCorners(spec);
+  if (!spec.warp) return corners;
+  const { along, out } = rectBasis(spec);
+  return corners.map((c, i) => {
+    const w = spec.warp![i];
+    return {
+      x: c.x + along.x * w.u + out.x * w.v,
+      y: c.y + along.y * w.u + out.y * w.v,
+    };
+  }) as [Point, Point, Point, Point];
+}
+
+/** Express a document-space point as a corner offset in the rectangle's frame. */
+export function toWarpOffset(spec: StretchSpec, cornerIndex: number, target: Point): WarpOffset {
+  const base = bandCorners(spec)[cornerIndex];
+  const { along, out } = rectBasis(spec);
+  const dx = target.x - base.x;
+  const dy = target.y - base.y;
+  return { u: dx * along.x + dy * along.y, v: dx * out.x + dy * out.y };
+}
+
+/** Centre of the rectangle, which is what rotation turns about. */
+export function rectCenter(spec: StretchSpec): Point {
+  const { along, out } = rectBasis(spec);
+  return {
+    x: spec.anchor.x + (along.x * spec.width) / 2 + (out.x * spec.length) / 2,
+    y: spec.anchor.y + (along.y * spec.width) / 2 + (out.y * spec.length) / 2,
+  };
+}
+
+/**
+ * The anchor that keeps `centre` fixed for a given rotation — rotating about
+ * the middle means the corner has to move.
+ */
+export function anchorForCentre(
+  spec: StretchSpec,
+  centre: Point,
+  rotation: number,
+): Point {
+  const { along, out } = rectBasis({ ...spec, rotation });
+  return {
+    x: centre.x - (along.x * spec.width) / 2 - (out.x * spec.length) / 2,
+    y: centre.y - (along.y * spec.width) / 2 - (out.y * spec.length) / 2,
+  };
+}
+
+/** The rectangle a freshly-locked path starts from, before it's dragged out. */
+export function initialRect(points: Point[]): Pick<StretchSpec, 'anchor' | 'width' | 'length'> {
+  return { anchor: { ...points[0] }, width: chordLength(points), length: 0 };
+}

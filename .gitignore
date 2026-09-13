@@ -1,0 +1,11 @@
+.DS_Store
+xcuserdata/
+*.xcodeproj
+DerivedData/
+build/
+node_modules/
+dist/
+
+test-results/
+playwright-report/
+artifacts/segmentation/

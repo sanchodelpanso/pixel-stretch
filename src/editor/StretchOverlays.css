@@ -1,0 +1,333 @@
+.stretch-path-editor,
+.stretch-rect-handles,
+.stretch-preview {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  /* Only handles take pointer events; bare canvas still belongs to the tool. */
+  pointer-events: none;
+}
+
+/* --- Sample path --- */
+
+.path-curve-shadow {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.55);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.path-curve {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.path-point {
+  fill: #fff;
+  stroke: var(--accent);
+  stroke-width: 1.75;
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.path-point:active {
+  cursor: grabbing;
+}
+
+.path-point:hover {
+  fill: var(--accent);
+  stroke: #fff;
+}
+
+.path-midpoint {
+  fill: rgba(10, 10, 15, 0.5);
+  stroke: #fff;
+  stroke-width: 1.5;
+  pointer-events: auto;
+  cursor: ns-resize;
+  transition: fill 0.12s;
+}
+
+.path-midpoint.hover {
+  fill: var(--accent);
+}
+
+/* --- Lock / unlock buttons --- */
+
+.path-lock,
+.rect-unlock {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.path-lock > rect,
+.rect-unlock > rect {
+  fill: rgba(10, 10, 15, 0.88);
+  stroke: var(--border-hover);
+  stroke-width: 1;
+}
+
+.path-lock:hover > rect {
+  fill: var(--accent);
+  stroke: #fff;
+}
+
+.rect-unlock:hover > rect {
+  fill: var(--accent-purple);
+  stroke: #fff;
+}
+
+.path-lock-glyph,
+.rect-unlock-glyph {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+/* --- Locked rectangle --- */
+
+.rect-outline {
+  fill: rgba(255, 255, 255, 0.06);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  fill-rule: nonzero;
+  /* The filled body is the move target. */
+  pointer-events: auto;
+  cursor: move;
+}
+
+.rect-outline:hover {
+  fill: rgba(255, 255, 255, 0.12);
+}
+
+/* A distorted band uses the secondary gray so the two states remain distinct. */
+.rect-outline.warped {
+  stroke: var(--accent-purple);
+  stroke-dasharray: 6 3;
+}
+
+/* Lines through the band's thirds, following every bend. */
+.rect-grid {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.75);
+  stroke-width: 1;
+  stroke-dasharray: none;
+  pointer-events: none;
+}
+
+.rect-rotate-stem {
+  stroke: var(--accent);
+  stroke-width: 1.25;
+  stroke-dasharray: 3 3;
+}
+
+.rect-rotate {
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.rect-rotate:active {
+  cursor: grabbing;
+}
+
+.rect-rotate > circle {
+  fill: rgba(10, 10, 15, 0.9);
+  stroke: var(--accent);
+  stroke-width: 1.75;
+}
+
+.rect-rotate:hover > circle {
+  fill: var(--accent);
+  stroke: #fff;
+}
+
+.rect-rotate > path {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.rect-source-line {
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.rect-handle {
+  fill: #fff;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.rect-handle:active {
+  cursor: grabbing;
+}
+
+.rect-handle:hover {
+  fill: var(--accent);
+  stroke: #fff;
+}
+
+/* Direct manipulation for the cylindrical 3D depth. */
+.bend-depth-stem {
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 1.25;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+}
+
+.bend-depth {
+  pointer-events: auto;
+  cursor: ns-resize;
+}
+
+.bend-depth > circle {
+  fill: rgba(10, 10, 15, 0.9);
+  stroke: #fff;
+  stroke-width: 1.75;
+}
+
+.bend-depth.active > circle,
+.bend-depth:hover > circle {
+  fill: #f2f2f2;
+  stroke: #111;
+}
+
+.bend-depth > path {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+}
+
+.bend-depth.active > path,
+.bend-depth:hover > path {
+  stroke: #111;
+}
+
+.rect-badge > rect {
+  fill: rgba(10, 10, 15, 0.88);
+  stroke: var(--border-hover);
+  stroke-width: 1;
+}
+
+.rect-badge > text {
+  fill: #fff;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Live preview while dragging the band out --- */
+
+.stretch-preview .preview-rect {
+  fill: rgba(255, 255, 255, 0.12);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+}
+
+.stretch-preview .preview-line {
+  stroke: #fff;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.stretch-preview circle {
+  fill: #fff;
+  stroke: #0a0a0a;
+  stroke-width: 1.5;
+}
+
+/* Grip that makes the pull gesture visible after the path is locked. */
+.preview-pull {
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.preview-pull:active {
+  cursor: grabbing;
+}
+
+.preview-pull > circle {
+  fill: var(--accent);
+  stroke: #fff;
+  stroke-width: 2;
+}
+
+.preview-pull:hover > circle {
+  fill: var(--accent-purple);
+}
+
+.preview-pull > path {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* --- Curved-edge controls --- */
+
+.edge-tangent {
+  stroke: rgba(255, 255, 255, 0.75);
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+}
+
+.edge-control {
+  fill: var(--accent-purple);
+  stroke: #fff;
+  stroke-width: 1.5;
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.edge-control:active {
+  cursor: grabbing;
+}
+
+.edge-control:hover {
+  fill: #fff;
+  stroke: var(--accent-purple);
+}
+
+/* --- Straight / curved mode toggle --- */
+
+.rect-mode {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.rect-mode > rect {
+  fill: rgba(10, 10, 15, 0.88);
+  stroke: var(--border-hover);
+  stroke-width: 1;
+}
+
+.rect-mode.on > rect {
+  fill: var(--accent-purple);
+  stroke: #fff;
+}
+
+.rect-mode:hover > rect {
+  stroke: #fff;
+}
+
+.rect-mode-glyph {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+}
