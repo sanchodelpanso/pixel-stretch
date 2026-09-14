@@ -1,6 +1,6 @@
 import type { Layer } from '../types/layer';
 import type { StretchSpec, Point } from '../types/stretch';
-import { rectBasis, bandCorners, warpedCorners, isWarped, hasCurvedEdges, isConvexQuad } from '../types/stretch';
+import { rectBasis, bandCorners, warpedCorners, isWarped, hasCurvedEdges, isConvexShape } from '../types/stretch';
 import type { ArcBand } from '../types/arc-band';
 import { arcBounds, arcLookup } from '../types/arc-band';
 import { bendPoint } from './projection';
@@ -345,7 +345,7 @@ export function renderStretchBand(spec: StretchSpec, source: Layer): BandRender 
   // side is carried entirely by `outSigned`, so the origin never moves.
   const origin: Point = spec.anchor;
   const curved = hasCurvedEdges(spec);
-  const distorted = curved || isWarped(spec) || spec.bend !== 0;
+  const distorted = curved || isWarped(spec) || spec.bend !== 0 || spec.removedEdge !== undefined;
 
   // The corner order already matches local (0,0)→(w,0)→(w,h)→(0,h): local
   // (0,height) lands on corner 3 for either sign of `length`, because
@@ -354,7 +354,7 @@ export function renderStretchBand(spec: StretchSpec, source: Layer): BandRender 
   // A non-convex quad throws the homography's points out towards infinity —
   // an unbounded canvas. Keep the last good pixels instead (e.g. a width
   // slider shrinking a skewed band past its own corners).
-  if (!curved && distorted && !isConvexQuad(quad)) return null;
+  if (!curved && distorted && !isConvexShape(spec)) return null;
   const at = bandSurface(spec);
   // A folded sheet or a bend can reach past the quad's own corners, so bound
   // it by every vertex.

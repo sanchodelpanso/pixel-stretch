@@ -87,6 +87,15 @@ export function bandSurface(spec: StretchSpec): SurfaceMap {
     const net = controlNet(edgeCurves(spec));
     return (u, v) => patchPoint(net, u, v);
   }
+  if (spec.removedEdge !== undefined) {
+    // No homography takes a square onto a triangle. Bilinear blending does,
+    // with every streak running straight into the apex.
+    const [p0, p1, p2, p3] = warpedCorners(spec);
+    return (u, v) => ({
+      x: (1 - v) * (p0.x + (p1.x - p0.x) * u) + v * (p3.x + (p2.x - p3.x) * u),
+      y: (1 - v) * (p0.y + (p1.y - p0.y) * u) + v * (p3.y + (p2.y - p3.y) * u),
+    });
+  }
   const m = quadHomography(warpedCorners(spec));
   return (u, v) => project(m, u, v);
 }

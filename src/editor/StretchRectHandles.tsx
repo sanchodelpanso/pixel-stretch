@@ -1,9 +1,10 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { StretchSpec, Point } from '../types/stretch';
-import type { EdgeWarp } from '../types/stretch';
+import type { EdgeWarp, RemovableEdge } from '../types/stretch';
 import {
   rectBasis, rectCenter, anchorForCentre, chordAngle,
   toEdgeOffset, isWarped, edgeCurves, pullCorner, skewCorner, NO_EDGE_WARP,
+  isMergedCorner, setRemovedEdge,
 } from '../types/stretch';
 import { bendPoint } from '../rendering/projection';
 import { bandSurface } from '../rendering/surface';
@@ -41,6 +42,12 @@ interface EdgeControlHandle {
 /** Corner handles, in the order `bandCorners` returns them. */
 const CORNER_ORDER: Record<string, number> = { nw: 0, ne: 1, se: 2, sw: 3 };
 
+/** Side handles that sit on a removable edge. `n` is the sample line and stays. */
+const SIDE_EDGE: Partial<Record<HandleId, RemovableEdge>> = { e: 1, s: 2, w: 3 };
+
+/** Where a removed edge's corners meet — the handle that restores it. */
+const APEX_CORNER: Record<RemovableEdge, number> = { 1: 1, 2: 2, 3: 0 };
+
 /** Handle position in normalised rect space, and which axes it drives. */
 const HANDLES: Record<HandleId, { u: number; v: number; movesW: boolean; movesL: boolean }> = {
   nw: { u: 0, v: 0, movesW: true, movesL: true },
@@ -77,6 +84,8 @@ export function StretchRectHandles({
     | { kind: 'move'; last: Point }
     | { kind: 'rotate' };
   const dragging = useRef<Drag | null>(null);
+  /** Tapping a side removes that edge, tapping the apex restores it; nothing drags. */
+  const [vertexMode, setVertexMode] = useState(false);
 
   const scale = viewWidth / docWidth;
   const toView = (p: Point) => ({ x: p.x * scale, y: p.y * scale });
@@ -234,7 +243,7 @@ export function StretchRectHandles({
 
   /** The eight edge controls, each paired with the corner it hangs off. */
   const edgeHandles: EdgeControlHandle[] = curvedMode
-    ? curves.flatMap((edge, i) => [
+    ? curves.flatMap((edge, i) => i === spec.removedEdge ? [] : [
         { edge: i, control: 0 as const, at: edge[1], anchor: edge[0] },
         { edge: i, control: 1 as const, at: edge[2], anchor: edge[3] },
       ])
@@ -288,7 +297,7 @@ export function StretchRectHandles({
         fill="none"
       />
 
-      {edgeHandles.map((h) => {
+      {!vertexMode && edgeHandles.map((h) => {
         const a = toView(h.anchor);
         const p = toView(h.at);
         return (
@@ -300,7 +309,7 @@ export function StretchRectHandles({
         );
       })}
 
-      {edgeHandles.map((h) => {
+      {!vertexMode && edgeHandles.map((h) => {
         const p = toView(h.at);
         return (
           <circle
@@ -320,14 +329,43 @@ export function StretchRectHandles({
 
       {(Object.keys(HANDLES) as HandleId[]).map((id) => {
         const { u, v } = HANDLES[id];
+        const cornerIndex = CORNER_ORDER[id];
+        const sideEdge = SIDE_EDGE[id];
+        // A removed edge has no side handle, and a merged corner is drawn once.
+        if (sideEdge !== undefined && sideEdge === spec.removedEdge) return null;
+        if (cornerIndex !== undefined && isMergedCorner(spec, cornerIndex)) return null;
+        const isApex = spec.removedEdge !== undefined && cornerIndex === APEX_CORNER[spec.removedEdge];
         const p = toView(projectedPoint(u, v));
+
+        if (vertexMode) {
+          // Only the handles that change the outline stay, as tap targets.
+          if (!isApex && sideEdge === undefined) return null;
+          return (
+            <g
+              key={id}
+              className={`vertex-toggle ${isApex ? 'restore' : 'remove'}`}
+              transform={`translate(${p.x}, ${p.y})`}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                onChange(setRemovedEdge(spec, isApex ? undefined : sideEdge), false);
+              }}
+            >
+              <title>{isApex ? 'Restore the removed edge' : 'Remove this edge'}</title>
+              {/* Finger-sized hit area around a small visible marker. */}
+              <circle className="vertex-toggle-hit" r={22} />
+              <circle r={11} />
+              <path d={isApex ? 'M-5,0 H5 M0,-5 V5' : 'M-5,0 H5'} />
+            </g>
+          );
+        }
+
         return (
           <rect
             key={id}
-            className="rect-handle"
+            className={`rect-handle ${isApex ? 'apex' : ''}`}
             x={p.x - 5} y={p.y - 5} width={10} height={10}
             onPointerDown={(e) => {
-              const cornerIndex = CORNER_ORDER[id];
               if (cornerIndex !== undefined) {
                 startDrag({ kind: 'warp', corner: cornerIndex })(e);
                 return;
@@ -399,6 +437,22 @@ export function StretchRectHandles({
           {curvedMode
             ? <path d="M0,11 C4,11 4,3 8,3 C12,3 12,11 16,11" />
             : <path d="M0,11 L16,3" />}
+        </g>
+      </g>
+
+      <g
+        className={`rect-mode ${vertexMode ? 'on' : ''}`}
+        transform={`translate(${unlockAt.x - 36}, ${unlockAt.y + 54})`}
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          setVertexMode((on) => !on);
+        }}
+      >
+        <title>{vertexMode ? 'Done editing edges' : 'Remove or restore edges'}</title>
+        <rect x={0} y={0} width={28} height={28} rx={7} />
+        <g transform="translate(6, 6)" className="rect-mode-glyph">
+          <path d="M1,14 L8,2 L15,14 Z" />
         </g>
       </g>
 

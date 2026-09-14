@@ -178,6 +178,13 @@
   stroke: #fff;
 }
 
+/* Where a removed edge's corners meet; double-click restores the edge. */
+.rect-handle.apex {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: rotate(45deg);
+}
+
 /* Direct manipulation for the cylindrical 3D depth. */
 .bend-depth-stem {
   stroke: rgba(255, 255, 255, 0.55);
@@ -330,6 +337,38 @@
   stroke: #fff;
   stroke-width: 1.75;
   stroke-linecap: round;
+}
+
+/* Edge edit mode: tap − on a side to remove it, + on the apex to restore it. */
+.vertex-toggle {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.vertex-toggle-hit {
+  fill: transparent;
+}
+
+.vertex-toggle > circle:not(.vertex-toggle-hit) {
+  fill: rgba(10, 10, 15, 0.88);
+  stroke: #fff;
+  stroke-width: 1.5;
+}
+
+.vertex-toggle.restore > circle:not(.vertex-toggle-hit) {
+  fill: var(--accent);
+  stroke: rgba(10, 10, 15, 0.88);
+}
+
+.vertex-toggle > path {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.vertex-toggle.restore > path {
+  stroke: #111;
 }
 
 /* --- Arc (swept) bands --- */

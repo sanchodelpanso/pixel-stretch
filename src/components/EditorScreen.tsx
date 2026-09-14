@@ -594,8 +594,8 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
       ? stretchSpec.arc
         ? 'Centre sets the radius · square the width · round end the sweep · drag a ◇ on an edge to add a spline point'
         : stretchSpec.warpMode === 'curved'
-        ? 'Round handles make a 2D wave · corner handles keep the fold effect'
-        : 'Drag a corner to skew the rectangle in 2D · use the curve button for waves'
+        ? 'Round handles make a 2D wave · corner handles keep the fold effect · △ removes or restores an edge'
+        : 'Drag a corner to skew the rectangle in 2D · △ removes or restores an edge · use the curve button for waves'
       : TOOL_HINTS.stretch;
 
   const busy = seg.isModelLoading || seg.isProcessing;

@@ -172,6 +172,9 @@ export function StretchPanel({
         {spec.warpMode !== 'curved' && isWarped(spec) && (
           <span>2D skew · drag any corner while the edges are straight</span>
         )}
+        {spec.removedEdge !== undefined && (
+          <span>Triangle · use the edge tool on the canvas to restore the edge</span>
+        )}
         {sourceName ? (
           <span>from {sourceName}</span>
         ) : (
@@ -220,8 +223,8 @@ export function StretchPanel({
           Unrotate
         </button>
         <button
-          disabled={!isWarped(spec) && spec.bend === 0 && !hasCurvedEdges(spec)}
-          onClick={() => onChange({ warp: NO_WARP, edges: NO_EDGE_WARP, bend: 0 }, false)}
+          disabled={!isWarped(spec) && spec.bend === 0 && !hasCurvedEdges(spec) && spec.removedEdge === undefined}
+          onClick={() => onChange({ warp: NO_WARP, edges: NO_EDGE_WARP, bend: 0, removedEdge: undefined }, false)}
         >
           Reset shape
         </button>

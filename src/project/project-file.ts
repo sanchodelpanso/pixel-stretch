@@ -218,6 +218,9 @@ function stretch(value: unknown): StretchSpec | undefined {
   if (value.warpMode !== undefined && value.warpMode !== 'straight' && value.warpMode !== 'curved') {
     throw new Error('A project stretch object has an unsupported warp mode.');
   }
+  if (value.removedEdge !== undefined && value.removedEdge !== 1 && value.removedEdge !== 2 && value.removedEdge !== 3) {
+    throw new Error('A project stretch object removes an unsupported edge.');
+  }
   return {
     points: value.points.map((entry, index) => point(entry, `points[${index}]`)),
     sourceLayerId: value.sourceLayerId,
@@ -231,6 +234,7 @@ function stretch(value: unknown): StretchSpec | undefined {
     ...(warp(value.warp, 'stretch.warp') ? { warp: warp(value.warp, 'stretch.warp') } : {}),
     ...(value.warpMode ? { warpMode: value.warpMode } : {}),
     ...(edges(value.edges) ? { edges: edges(value.edges) } : {}),
+    ...(value.removedEdge !== undefined ? { removedEdge: value.removedEdge } : {}),
     ...(value.arc !== undefined ? { arc: arc(value.arc) } : {}),
   };
 }

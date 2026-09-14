@@ -32,6 +32,14 @@ export type EdgeControls = [WarpOffset, WarpOffset];
 /** Controls for all four edges, in c0→c1, c1→c2, c2→c3, c3→c0 order. */
 export type EdgeWarp = [EdgeControls, EdgeControls, EdgeControls, EdgeControls];
 
+/**
+ * An edge that can be removed to turn the band into a triangle, by index in
+ * c0→c1, c1→c2, c2→c3, c3→c0 order. Edge 0 runs along the sample line and
+ * always stays: 1 is the side at the path's end, 2 the far end, 3 the side at
+ * the path's start.
+ */
+export type RemovableEdge = 1 | 2 | 3;
+
 export const NO_EDGE_WARP: EdgeWarp = [
   [{ u: 0, v: 0 }, { u: 0, v: 0 }],
   [{ u: 0, v: 0 }, { u: 0, v: 0 }],
@@ -92,6 +100,12 @@ export interface StretchSpec {
    * as offsets from the straight-edge thirds. Only meaningful in curved mode.
    */
   edges?: EdgeWarp;
+  /**
+   * An edge shrunk to nothing, making the band a triangle. Its two corners
+   * meet: a side edge folds onto its sample-line corner, the far edge meets in
+   * the middle. Their own warps are kept, so restoring the edge reopens it.
+   */
+  removedEdge?: RemovableEdge;
   /**
    * Sweep the band round a pivot instead of pulling it out straight. While set,
    * `width` is the band's radial thickness and the rectangle fields (`anchor`,
@@ -185,7 +199,8 @@ export function edgeCurves(spec: StretchSpec): [
 
   return corners.map((from, i) => {
     const to = corners[(i + 1) % 4];
-    const offsets = controls[i];
+    // A removed edge is a single point; its stored controls would loop out of it.
+    const offsets = i === spec.removedEdge ? NO_EDGE_WARP[i] : controls[i];
     const knot = (fraction: number, offset: WarpOffset): Point => ({
       x: from.x + (to.x - from.x) * fraction + along.x * offset.u + out.x * offset.v,
       y: from.y + (to.y - from.y) * fraction + along.y * offset.u + out.y * offset.v,
@@ -235,8 +250,9 @@ export function pullCorner(
   const current: StretchSpec = spec.warpMode === 'curved' ? spec : { ...spec, edges: NO_EDGE_WARP };
   const handles = edgeCurves(current);
 
+  const group = cornerGroup(current, corner);
   const warp = (current.warp ?? NO_WARP).map((offset) => ({ ...offset })) as Warp;
-  warp[corner] = toWarpOffset(current, corner, target);
+  for (const moved of group) warp[moved] = toWarpOffset(current, moved, target);
   const pulled: StretchSpec = { ...current, warp };
 
   // Handles are stored relative to the straight line between their edge's
@@ -244,7 +260,7 @@ export function pullCorner(
   const edges = (current.edges ?? NO_EDGE_WARP).map((edge) => (
     edge.map((control) => ({ ...control }))
   )) as EdgeWarp;
-  for (const edge of [(corner + 3) % 4, corner]) {
+  for (const edge of new Set(group.flatMap((moved) => [(moved + 3) % 4, moved]))) {
     edges[edge] = [
       toEdgeOffset(pulled, edge, 0, handles[edge][1]),
       toEdgeOffset(pulled, edge, 1, handles[edge][2]),
@@ -266,13 +282,28 @@ export function skewCorner(
   target: Point,
 ): Pick<StretchSpec, 'warp' | 'warpMode' | 'bend'> {
   const warp = (spec.warp ?? NO_WARP).map((offset) => ({ ...offset })) as Warp;
-  warp[corner] = toWarpOffset(spec, corner, convexCornerTarget(spec, corner, target));
+  const allowed = convexCornerTarget(spec, corner, target);
+  for (const moved of cornerGroup(spec, corner)) warp[moved] = toWarpOffset(spec, moved, allowed);
   return { warp, warpMode: 'straight', bend: 0 };
 }
 
 /** How much a vertex turns: positive or negative by winding, zero when straight. */
 function turnAt(previous: Point, at: Point, next: Point): number {
   return (at.x - previous.x) * (next.y - at.y) - (at.y - previous.y) * (next.x - at.x);
+}
+
+/** The band's outline with any removed edge's corners merged: three or four points. */
+export function shapeOutline(spec: StretchSpec): Point[] {
+  const corners = warpedCorners(spec);
+  return corners.filter((_, i) => !isMergedCorner(spec, i));
+}
+
+/** Whether the band's outline — quad or triangle — is strictly convex. */
+export function isConvexShape(spec: StretchSpec): boolean {
+  const outline = shapeOutline(spec);
+  const n = outline.length;
+  const turns = outline.map((point, i) => turnAt(outline[(i + n - 1) % n], point, outline[(i + 1) % n]));
+  return turns.every((t) => t > 0) || turns.every((t) => t < 0);
 }
 
 /**
@@ -292,10 +323,17 @@ export function isConvexQuad(quad: [Point, Point, Point, Point]): boolean {
  * so the corner slides along whichever limit it runs into.
  */
 function convexCornerTarget(spec: StretchSpec, corner: number, target: Point): Point {
-  const quad = warpedCorners(spec);
-  const previous = quad[(corner + 3) % 4];
-  const next = quad[(corner + 1) % 4];
-  const opposite = quad[(corner + 2) % 4];
+  // Walk the outline, so a triangle's apex is limited by its two real neighbours.
+  const corners = warpedCorners(spec);
+  const order = [0, 1, 2, 3].filter((i) => !isMergedCorner(spec, i));
+  const at = order.indexOf(corner === 3 && isMergedCorner(spec, 3) ? 2 : corner);
+  const n = order.length;
+  const outline = order.map((i) => corners[i]);
+  const current = outline[at];
+  const previous = outline[(at + n - 1) % n];
+  const next = outline[(at + 1) % n];
+  const beforePrevious = outline[(at + n - 2) % n];
+  const afterNext = outline[(at + 2) % n];
   const rect = bandCorners(spec);
   const winding = Math.sign(turnAt(rect[3], rect[0], rect[1])) || 1;
   const margin = Math.max(1, 0.02 * Math.min(Math.abs(spec.width), Math.abs(spec.length)));
@@ -303,8 +341,8 @@ function convexCornerTarget(spec: StretchSpec, corner: number, target: Point): P
   // Each limit: the corner must sit at least `margin` on the winding side of
   // the line through `origin` along `direction`.
   const limits = [
-    { origin: previous, direction: { x: previous.x - opposite.x, y: previous.y - opposite.y } },
-    { origin: next, direction: { x: opposite.x - next.x, y: opposite.y - next.y } },
+    { origin: previous, direction: { x: previous.x - beforePrevious.x, y: previous.y - beforePrevious.y } },
+    { origin: next, direction: { x: afterNext.x - next.x, y: afterNext.y - next.y } },
     { origin: previous, direction: { x: previous.x - next.x, y: previous.y - next.y } },
   ].filter(({ direction }) => Math.hypot(direction.x, direction.y) > 1e-9);
   const clearance = (p: Point, { origin, direction }: typeof limits[number]) => {
@@ -329,7 +367,6 @@ function convexCornerTarget(spec: StretchSpec, corner: number, target: Point): P
 
   // Limits that can't all be met (a band already folded some other way): walk
   // from where the corner is now towards the pointer as far as stays valid.
-  const current = quad[corner];
   if (!allowed(current)) return current;
   let lo = 0;
   let hi = 1;
@@ -352,6 +389,19 @@ export function isWarped(spec: StretchSpec): boolean {
  * offset applied in the rectangle's own frame.
  */
 export function warpedCorners(spec: StretchSpec): [Point, Point, Point, Point] {
+  const corners = openCorners(spec);
+  if (spec.removedEdge === 1) corners[2] = { ...corners[1] };
+  else if (spec.removedEdge === 3) corners[3] = { ...corners[0] };
+  else if (spec.removedEdge === 2) {
+    const apex = { x: (corners[2].x + corners[3].x) / 2, y: (corners[2].y + corners[3].y) / 2 };
+    corners[2] = apex;
+    corners[3] = { ...apex };
+  }
+  return corners;
+}
+
+/** The warped corners as if no edge were removed. */
+function openCorners(spec: StretchSpec): [Point, Point, Point, Point] {
   const corners = bandCorners(spec);
   if (!spec.warp) return corners;
   const { along, out } = rectBasis(spec);
@@ -362,6 +412,53 @@ export function warpedCorners(spec: StretchSpec): [Point, Point, Point, Point] {
       y: c.y + along.y * w.u + out.y * w.v,
     };
   }) as [Point, Point, Point, Point];
+}
+
+/**
+ * Corners a drag on `corner` has to move together. The apex of a removed far
+ * edge is two corners; a corner merged into its neighbour has no handle.
+ */
+export function cornerGroup(spec: StretchSpec, corner: number): number[] {
+  return spec.removedEdge === 2 && (corner === 2 || corner === 3) ? [2, 3] : [corner];
+}
+
+/** A corner hidden because a removed edge merged it into another. */
+export function isMergedCorner(spec: StretchSpec, corner: number): boolean {
+  return (spec.removedEdge === 1 && corner === 2) || ((spec.removedEdge === 2 || spec.removedEdge === 3) && corner === 3);
+}
+
+/**
+ * Remove an edge to make a triangle, or restore it. Restoring reopens the edge
+ * where it was; if the corners were dragged in the meantime and would no
+ * longer make a convex band, the reopened corners go back to the rectangle.
+ * Removing a different edge restores the current one first, so the triangle is
+ * always cut from a convex band.
+ */
+export function setRemovedEdge(
+  spec: StretchSpec,
+  edge: RemovableEdge | undefined,
+): Pick<StretchSpec, 'removedEdge' | 'warp'> {
+  if (edge === spec.removedEdge) return { removedEdge: edge, warp: spec.warp };
+  if (edge !== undefined) {
+    const open = spec.removedEdge === undefined ? spec : { ...spec, ...setRemovedEdge(spec, undefined) };
+    return { removedEdge: edge, warp: open.warp };
+  }
+  const warp = (spec.warp ?? NO_WARP).map((offset) => ({ ...offset })) as Warp;
+  const reopened = spec.removedEdge === 1 ? [2] : spec.removedEdge === 3 ? [3] : [2, 3];
+  if (spec.removedEdge === 2) {
+    // Spread the far edge back out around wherever its apex went.
+    const apex = warpedCorners(spec)[2];
+    const { along } = rectBasis(spec);
+    for (const [corner, side] of [[2, 0.5], [3, -0.5]] as const) {
+      const target = { x: apex.x + along.x * spec.width * side, y: apex.y + along.y * spec.width * side };
+      warp[corner] = toWarpOffset(spec, corner, target);
+    }
+  }
+  const open = { ...spec, warp, removedEdge: undefined };
+  if (isConvexQuad(warpedCorners(open))) return { removedEdge: undefined, warp };
+  for (const corner of reopened) warp[corner] = { u: 0, v: 0 };
+  if (isConvexQuad(warpedCorners(open))) return { removedEdge: undefined, warp };
+  return { removedEdge: undefined, warp: undefined };
 }
 
 /** Express a document-space point as a corner offset in the rectangle's frame. */
