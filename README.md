@@ -20,7 +20,8 @@ Open the printed localhost URL and choose a JPEG, PNG, WebP, or HEIC photo. The 
 - **Stretch:** draw a sample path, shape and lock it, then drag to pull out a band.
   Switch to **Arc** before dragging to sweep the band round a pivot instead; curl back
   to the start to close a ring, then use the centre, square and round handles to set
-  radius, width and sweep.
+  radius, width and sweep. Drag a hollow ◇ marker on the inner or outer edge to add a
+  spline point and reshape that edge (a wave, a flare…); double-click a point to remove it.
 
 Automatically lifted subjects use a narrow inward feather to blend their edges
 into the stretch while retaining sharp interior detail. Preview and PNG export

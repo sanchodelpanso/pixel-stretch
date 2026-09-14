@@ -1,6 +1,6 @@
 import type { Layer, LayerDocument } from '../types/layer';
 import type { EdgeWarp, Point, StretchSpec, Warp } from '../types/stretch';
-import type { ArcBand } from '../types/arc-band';
+import type { ArcBand, EdgeKnot } from '../types/arc-band';
 import { createCanvas, makeThumbnail } from '../layers/layer-utils';
 
 export const PROJECT_FORMAT = 'com.pixelstretch.project';
@@ -175,6 +175,17 @@ function edges(value: unknown): EdgeWarp | undefined {
   }) as EdgeWarp;
 }
 
+function edgeKnots(value: unknown, label: string): EdgeKnot[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error(`Project field “${label}” is invalid.`);
+  return value.map((entry, index) => {
+    if (!isRecord(entry)) throw new Error(`Project field “${label}[${index}]” is invalid.`);
+    const t = finiteNumber(entry.t, `${label}[${index}].t`);
+    if (t < 0 || t > 1) throw new Error(`Project field “${label}[${index}].t” is out of range.`);
+    return { t, offset: finiteNumber(entry.offset, `${label}[${index}].offset`) };
+  });
+}
+
 function arc(value: unknown): ArcBand | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value) || typeof value.outward !== 'boolean') {
@@ -191,6 +202,8 @@ function arc(value: unknown): ArcBand | undefined {
     radius,
     sweep,
     outward: value.outward,
+    ...(value.inner !== undefined ? { inner: edgeKnots(value.inner, 'stretch.arc.inner') } : {}),
+    ...(value.outer !== undefined ? { outer: edgeKnots(value.outer, 'stretch.arc.outer') } : {}),
   };
 }
 

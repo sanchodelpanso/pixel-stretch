@@ -81,6 +81,7 @@ export function StretchPanel({
     const arc = spec.arc;
     const closed = isClosedArc(arc);
     const turnSign = arc.sweep < 0 ? -1 : 1;
+    const edgeKnots = (arc.inner?.length ?? 0) + (arc.outer?.length ?? 0);
     return (
       <section className="panel-section stretch-section">
         <div className="panel-section-title">
@@ -91,6 +92,9 @@ export function StretchPanel({
           <span>
             Path {arcLength}px · swept {closed ? 'into a ring' : `${Math.round(toDegrees(Math.abs(arc.sweep)))}°`}
           </span>
+          {edgeKnots > 0 && (
+            <span>Edges shaped by {edgeKnots} point{edgeKnots === 1 ? '' : 's'} · double-click one to remove it</span>
+          )}
           {sourceName ? (
             <span>from {sourceName}</span>
           ) : (
@@ -137,6 +141,12 @@ export function StretchPanel({
             onClick={() => onChange({ arc: { ...arc, sweep: turnSign * (closed ? Math.PI : FULL_TURN) } }, false)}
           >
             {closed ? 'Open ring' : 'Close ring'}
+          </button>
+          <button
+            disabled={edgeKnots === 0}
+            onClick={() => onChange({ arc: { ...arc, inner: undefined, outer: undefined } }, false)}
+          >
+            Reset edges
           </button>
         </div>
       </section>

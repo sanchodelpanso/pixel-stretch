@@ -421,3 +421,24 @@
   background: var(--accent);
   color: #0a0a0f;
 }
+
+.arc-edge-insert {
+  cursor: copy;
+}
+
+.arc-knot {
+  fill: #fff;
+  stroke: rgba(10, 10, 15, 0.9);
+  stroke-width: 2;
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.arc-knot:hover {
+  fill: var(--accent);
+  stroke: #fff;
+}
+
+.arc-knot:active {
+  cursor: grabbing;
+}

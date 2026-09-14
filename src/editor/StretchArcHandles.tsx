@@ -1,8 +1,9 @@
 import { useCallback, useRef } from 'react';
 import type { StretchSpec, Point } from '../types/stretch';
-import type { ArcBand } from '../types/arc-band';
+import type { ArcBand, ArcEdge, EdgeKnot } from '../types/arc-band';
 import {
-  arcCentre, arcOutline, arcPoint, clampRadius, isClosedArc, snapSweep, sweepToward,
+  arcCentre, arcEdgePoint, arcOutline, arcPoint, clampRadius, edgeInsertionPoints, edgeKnotAt,
+  edgeOffset, isClosedArc, snapSweep, sweepToward,
 } from '../types/arc-band';
 import { toDegrees } from '../utils/math-utils';
 
@@ -22,10 +23,19 @@ type Drag =
   | { kind: 'radius'; start: Point; radius: number }
   | { kind: 'width' }
   | { kind: 'sweep' }
+  | { kind: 'knot'; edge: ArcEdge; index: number }
   | { kind: 'move'; last: Point };
 
 /** Keeps a handle this far inside the view when its true spot is off-canvas. */
 const EDGE_INSET = 18;
+
+const EDGES: ArcEdge[] = ['inner', 'outer'];
+
+/** Sort knots by `t`, reporting where the one at `index` ended up. */
+function sortKnots(knots: EdgeKnot[], index: number): { knots: EdgeKnot[]; index: number } {
+  const order = knots.map((knot, i) => ({ knot, i })).sort((a, b) => a.knot.t - b.knot.t);
+  return { knots: order.map((entry) => entry.knot), index: order.findIndex((entry) => entry.i === index) };
+}
 
 function pathData(points: Point[], scale: number, close: boolean): string {
   return points
@@ -34,9 +44,13 @@ function pathData(points: Point[], scale: number, close: boolean): string {
 }
 
 /**
- * A swept band's handles: the centre sets the radius, the outer edge sets the
- * thickness, and the far end sets how far round it goes — snapping shut into a
- * ring near a full turn. Dragging the band itself moves it off its path.
+ * A swept band's handles: the centre sets the radius, the square at the start
+ * edge's outer end sets the thickness, and the far end sets how far round it
+ * goes — snapping shut into a ring near a full turn. Dragging the band itself
+ * moves it off its path.
+ *
+ * Each edge also carries spline knots. Dragging a hollow marker on an edge
+ * pulls a new knot out of it; double-clicking a knot removes it.
  */
 export function StretchArcHandles({
   spec,
@@ -98,10 +112,22 @@ export function StretchArcHandles({
       return;
     }
 
+    if (drag.kind === 'knot') {
+      const knots = [...(arc[drag.edge] ?? [])];
+      knots[drag.index] = edgeKnotAt(arc, width, drag.edge, point);
+      // A knot dragged past its neighbour simply swaps order with it.
+      const sorted = sortKnots(knots, drag.index);
+      drag.index = sorted.index;
+      onChange({ arc: { ...arc, [drag.edge]: sorted.knots } }, true);
+      return;
+    }
+
     if (drag.kind === 'width') {
       const centre = arcCentre(arc);
       const distance = Math.hypot(point.x - centre.x, point.y - centre.y);
-      const next = Math.max(1, Math.min(2 * arc.radius, 2 * Math.abs(distance - arc.radius)));
+      // The handle rides the outer edge where it meets the start edge.
+      const shaped = edgeOffset(arc.outer, 0, isClosedArc(arc));
+      const next = Math.max(1, Math.min(2 * arc.radius, 2 * Math.abs(distance - arc.radius - shaped)));
       onChange({ width: Math.round(next) }, true);
       return;
     }
@@ -113,6 +139,23 @@ export function StretchArcHandles({
       : Math.sign(arc.sweep) * 1e-3;
     onChange({ arc: { ...arc, sweep: snapSweep(kept) } }, true);
   }, [arc, spec.width, toDoc, onChange]);
+
+  /** Pull a new knot out of an edge at `t`, exactly on the current curve. */
+  const insertKnot = useCallback((edge: ArcEdge, t: number) => (e: React.PointerEvent) => {
+    const knots = [...(arc[edge] ?? []), { t, offset: edgeOffset(arc[edge], t, isClosedArc(arc)) }];
+    const sorted = sortKnots(knots, knots.length - 1);
+    startDrag({ kind: 'knot', edge, index: sorted.index })(e);
+    // The marker turns into a knot and unmounts mid-gesture, taking a capture
+    // on itself with it; hold the gesture on the overlay instead.
+    svgRef.current?.setPointerCapture(e.pointerId);
+    onChange({ arc: { ...arc, [edge]: sorted.knots } }, true);
+  }, [arc, startDrag, onChange]);
+
+  const removeKnot = useCallback((edge: ArcEdge, index: number) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const knots = (arc[edge] ?? []).filter((_, i) => i !== index);
+    onChange({ arc: { ...arc, [edge]: knots.length ? knots : undefined } }, false);
+  }, [arc, onChange]);
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
     if (!dragging.current) return;
@@ -131,17 +174,16 @@ export function StretchArcHandles({
   };
   const centreOffCanvas = pinned.x !== centreView.x || pinned.y !== centreView.y;
 
-  const startInner = toView(arcPoint(arc, -width / 2, 0));
-  const startOuter = toView(arcPoint(arc, width / 2, 0));
+  const startInner = toView(arcEdgePoint(arc, width, 'inner', 0));
+  const startOuter = toView(arcEdgePoint(arc, width, 'outer', 0));
   // Controls stand off past the outer end of the start edge, clear of the
   // centre handle however tight the curl.
   const unlockAt = {
-    x: startOuter.x + Math.cos(arc.angle) * 26 - 14,
-    y: startOuter.y + Math.sin(arc.angle) * 26 - 14,
+    x: startOuter.x + Math.cos(arc.angle) * 34 - 14,
+    y: startOuter.y + Math.sin(arc.angle) * 34 - 14,
   };
   const endMid = toView(arcPoint(arc, 0, 1));
-  const widthAt = toView(arcPoint(arc, width / 2, 0.5));
-  const guide = toView(arcPoint(arc, 0, 0.5));
+  const widthAt = startOuter;
   const degrees = Math.round(toDegrees(Math.abs(arc.sweep)));
 
   return (
@@ -175,7 +217,6 @@ export function StretchArcHandles({
       {!centreOffCanvas && !closed && (
         <line className="arc-spoke" x1={centreView.x} y1={centreView.y} x2={endMid.x} y2={endMid.y} />
       )}
-      <line className="arc-spoke" x1={guide.x} y1={guide.y} x2={widthAt.x} y2={widthAt.y} />
 
       <g
         className={`arc-radius-handle ${centreOffCanvas ? 'pinned' : ''}`}
@@ -189,6 +230,36 @@ export function StretchArcHandles({
         <circle r={9} />
         <circle className="arc-radius-dot" r={2.5} />
       </g>
+
+      {EDGES.flatMap((edge) => edgeInsertionPoints(arc, edge).map((t) => {
+        const p = toView(arcEdgePoint(arc, width, edge, t));
+        return (
+          <rect
+            key={`insert-${edge}-${t}`}
+            className={`path-midpoint arc-edge-insert ${edge}`}
+            x={p.x - 4.5} y={p.y - 4.5} width={9} height={9}
+            transform={`rotate(45 ${p.x} ${p.y})`}
+            onPointerDown={insertKnot(edge, t)}
+          >
+            <title>Drag to add a point to the {edge} edge</title>
+          </rect>
+        );
+      }))}
+
+      {EDGES.flatMap((edge) => (arc[edge] ?? []).map((knot, index) => {
+        const p = toView(arcEdgePoint(arc, width, edge, knot.t));
+        return (
+          <circle
+            key={`knot-${edge}-${index}`}
+            className={`arc-knot ${edge}`}
+            cx={p.x} cy={p.y} r={6}
+            onPointerDown={startDrag({ kind: 'knot', edge, index })}
+            onDoubleClick={removeKnot(edge, index)}
+          >
+            <title>Drag to reshape the {edge} edge · double-click to remove</title>
+          </circle>
+        );
+      }))}
 
       <rect
         className="rect-handle arc-width-handle"

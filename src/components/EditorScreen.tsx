@@ -565,7 +565,7 @@ export function EditorScreen({ source }: EditorScreenProps) {
       : 'Drag the hollow midpoints to bend the path · double-click a point to remove it · 🔒 to lock'
     : stretchSpec
       ? stretchSpec.arc
-        ? 'Centre handle sets the radius · square handle the width · round handle the sweep'
+        ? 'Centre sets the radius · square the width · round end the sweep · drag a ◇ on an edge to add a spline point'
         : stretchSpec.warpMode === 'curved'
         ? 'Round handles make a 2D wave · corner handles keep the fold effect'
         : 'Drag a corner to skew the rectangle in 2D · use the curve button for waves'

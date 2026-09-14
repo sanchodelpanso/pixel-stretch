@@ -6,6 +6,10 @@ import {
   arcFromPull,
   arcLookup,
   arcPoint,
+  edgeInsertionPoints,
+  edgeKnotAt,
+  edgeOffset,
+  edgeRadius,
   isClosedArc,
   sweepToward,
   type ArcBand,
@@ -94,4 +98,56 @@ test('lookup maps the start edge back onto the sample line in path order', () =>
   const middle = lookup(mid.x + 0.001, mid.y)!;
   assert.ok(middle.t < 0.01);
   assert.equal(lookup(1400, 1400), null);
+});
+
+test('an open edge spline passes through its knots and stays pinned at both ends', () => {
+  const knots = [{ t: 0.25, offset: 30 }, { t: 0.5, offset: -20 }, { t: 0.75, offset: 30 }];
+  for (const knot of knots) near(edgeOffset(knots, knot.t, false), knot.offset, 1e-9);
+  near(edgeOffset(knots, 0, false), 0, 1e-9);
+  near(edgeOffset(knots, 1, false), 0, 1e-9);
+  // Smooth between knots: no jump either side of one.
+  near(edgeOffset(knots, 0.5 - 1e-6, false), edgeOffset(knots, 0.5 + 1e-6, false), 1e-3);
+});
+
+test('a ring edge spline wraps round without a seam', () => {
+  const knots = [{ t: 0.1, offset: 40 }, { t: 0.6, offset: -10 }];
+  for (const knot of knots) near(edgeOffset(knots, knot.t, true), knot.offset, 1e-9);
+  near(edgeOffset(knots, 0, true), edgeOffset(knots, 1 - 1e-9, true), 1e-5);
+  const slope = (t: number) => (edgeOffset(knots, t + 1e-5, true) - edgeOffset(knots, t - 1e-5, true)) / 2e-5;
+  near(slope(1e-4), slope(1 - 1e-4), 0.5);
+});
+
+test('streaks follow a waved edge: the edge itself still reads the path ends', () => {
+  const plain = arcFromPull(start, end, width, { x: 620, y: 360 }, null)!;
+  const arc = { ...plain, outer: [{ t: 0.5, offset: 60 }], inner: [{ t: 0.5, offset: -30 }] };
+  const lookup = arcLookup(arc, width);
+  const centre = arcCentre(arc);
+  const theta = arc.angle + arc.sweep * 0.5;
+  const at = (r: number) => lookup(centre.x + Math.cos(theta) * r, centre.y + Math.sin(theta) * r);
+  const outer = edgeRadius(arc, width, 'outer', 0.5);
+  const inner = edgeRadius(arc, width, 'inner', 0.5);
+  near(outer - inner, width + 90, 1e-6);
+  const nearInner = at(inner + 0.5)!;
+  const nearOuter = at(outer - 0.5)!;
+  assert.ok(Math.min(nearInner.u, nearOuter.u) < 0.01);
+  assert.ok(Math.max(nearInner.u, nearOuter.u) > 0.99);
+  assert.equal(at(outer + 2), null);
+});
+
+test('a pointer maps back onto the knot it would place', () => {
+  const plain = arcFromPull(start, end, width, { x: 620, y: 360 }, null)!;
+  const arc = { ...plain, outer: [{ t: 0.4, offset: 25 }] };
+  const target = { t: 0.3, offset: -15 };
+  const radius = edgeRadius({ ...arc, outer: [] }, width, 'outer', target.t) + target.offset;
+  const knot = edgeKnotAt(arc, width, 'outer', arcPoint(arc, radius - arc.radius, target.t));
+  near(knot.t, target.t, 1e-9);
+  near(knot.offset, target.offset, 1e-6);
+});
+
+test('plain edges offer insertion points and knots split the gaps', () => {
+  const plain = arcFromPull(start, end, width, { x: 620, y: 360 }, null)!;
+  assert.equal(edgeInsertionPoints(plain, 'inner').length, 4);
+  const withKnot = { ...plain, inner: [{ t: 0.5, offset: 10 }] };
+  const ts = edgeInsertionPoints(withKnot, 'inner');
+  assert.ok(ts.every((t) => Math.abs(t - 0.5) > 0.05));
 });

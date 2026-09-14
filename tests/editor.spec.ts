@@ -325,12 +325,32 @@ test('arc mode sweeps a locked line round into a ring with radius and width hand
   await expect(page.locator('.arc-radius-handle')).toHaveCount(1);
   await expect(page.locator('.arc-width-handle')).toHaveCount(1);
 
+  // The width handle sits where the start edge meets the outer edge; drag it inward.
   const width = (await page.locator('.arc-width-handle').boundingBox())!;
-  await page.mouse.move(width.x + width.width / 2, width.y + width.height / 2);
+  const pivot = (await page.locator('.arc-radius-handle').boundingBox())!;
+  const grip = { x: width.x + width.width / 2, y: width.y + width.height / 2 };
+  const inward = { x: pivot.x + pivot.width / 2 - grip.x, y: pivot.y + pivot.height / 2 - grip.y };
+  const inwardLength = Math.hypot(inward.x, inward.y);
+  await page.mouse.move(grip.x, grip.y);
   await page.mouse.down();
-  await page.mouse.move(width.x + width.width / 2, width.y + width.height / 2 + 30, { steps: 6 });
+  await page.mouse.move(grip.x + inward.x / inwardLength * 30, grip.y + inward.y / inwardLength * 30, { steps: 6 });
   await page.mouse.up();
   expect(Number(await page.getByLabel('Width').inputValue())).toBeLessThan(200);
+
+  // Pulling a hollow edge marker outward adds a spline point that reshapes that edge.
+  const centreBox = (await page.locator('.arc-radius-handle').boundingBox())!;
+  const marker = (await page.locator('.arc-edge-insert.outer').first().boundingBox())!;
+  const from = { x: marker.x + marker.width / 2, y: marker.y + marker.height / 2 };
+  const spoke = { x: from.x - (centreBox.x + centreBox.width / 2), y: from.y - (centreBox.y + centreBox.height / 2) };
+  const spokeLength = Math.hypot(spoke.x, spoke.y);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x + spoke.x / spokeLength * 30, from.y + spoke.y / spokeLength * 30, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.locator('.arc-knot.outer')).toHaveCount(1);
+  await expect(page.getByText(/Edges shaped by 1 point/)).toBeVisible();
+  await page.locator('.arc-knot.outer').dblclick();
+  await expect(page.locator('.arc-knot')).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Open ring' }).click();
   await expect(badge).toContainText('180°');
