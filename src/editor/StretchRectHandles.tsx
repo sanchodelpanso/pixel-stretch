@@ -7,6 +7,7 @@ import {
   isMergedCorner, setRemovedEdge,
 } from '../types/stretch';
 import { bendPoint } from '../rendering/projection';
+import { SubjectOnlyToggle } from './SubjectOnlyToggle';
 import { bandSurface } from '../rendering/surface';
 import { clamp } from '../utils/math-utils';
 
@@ -28,6 +29,8 @@ interface StretchRectHandlesProps {
   onBeginDrag: () => void;
   /** Reopen the path for editing. */
   onUnlock: () => void;
+  /** Whether the band's source has a lifted subject it could read from alone. */
+  hasSubject: boolean;
 }
 
 /** Each edge's two Bézier controls, as flat descriptors for rendering. */
@@ -74,6 +77,7 @@ export function StretchRectHandles({
   onChange,
   onBeginDrag,
   onUnlock,
+  hasSubject,
 }: StretchRectHandlesProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   type Drag =
@@ -455,6 +459,15 @@ export function StretchRectHandles({
           <path d="M1,14 L8,2 L15,14 Z" />
         </g>
       </g>
+
+      {hasSubject && (
+        <SubjectOnlyToggle
+          on={Boolean(spec.subjectOnly)}
+          x={unlockAt.x - 36}
+          y={unlockAt.y + 88}
+          onToggle={() => onChange({ subjectOnly: !spec.subjectOnly }, false)}
+        />
+      )}
 
       <g
         className="rect-unlock"

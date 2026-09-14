@@ -234,13 +234,19 @@ export function translateLayer(layer: Layer, dx: number, dy: number): Layer {
   return moved;
 }
 
+/** The subject lifted off `sourceId` to protect it from its stretches, if any. */
+export function protectedSubject(layers: Layer[], sourceId: string): Layer | null {
+  return layers.find((layer) => layer.protectionSourceId === sourceId && !layer.stretch) ?? null;
+}
+
 /** Build a brand-new generative stretch layer, or null if the band is degenerate. */
 export function createStretchLayer(
   spec: StretchSpec,
   source: Layer,
   name: string,
+  subject: Layer | null = null,
 ): Layer | null {
-  const band = renderStretchBand(spec, source);
+  const band = renderStretchBand(spec, source, subject);
   if (!band) return null;
   return { ...layerFromCanvas(band.canvas, name, band.x, band.y), stretch: spec };
 }
@@ -253,8 +259,9 @@ export function rerenderStretchLayer(
   layer: Layer,
   spec: StretchSpec,
   source: Layer,
+  subject: Layer | null = null,
 ): Layer {
-  const band = renderStretchBand(spec, source);
+  const band = renderStretchBand(spec, source, subject);
   // A degenerate spec keeps the old pixels rather than blanking the layer.
   if (!band) return { ...layer, stretch: spec };
   return {

@@ -59,48 +59,67 @@ function createCanvas(width: number, height: number): HTMLCanvasElement {
  * whole strip, so widening the rectangle stretches the same pixels rather than
  * reaching for new ones. Sampling is bilinear so a curve doesn't stairstep.
  */
-function samplePathStrip(source: Layer, points: Point[], columns: number): HTMLCanvasElement {
+function samplePathStrip(source: Layer, points: Point[], columns: number, subject: Layer | null): HTMLCanvasElement {
   const strip = createCanvas(columns, 1);
   const ctx = strip.getContext('2d')!;
   const out = ctx.createImageData(columns, 1);
-  out.data.set(samplePathRow(source, points, columns));
+  out.data.set(samplePathRow(source, points, columns, subject));
   ctx.putImageData(out, 0, 0);
   return strip;
 }
 
-/** The same row of colours as `samplePathStrip`, as raw RGBA. */
-function samplePathRow(source: Layer, points: Point[], columns: number): Uint8ClampedArray {
+/** Bilinear read of one channel at a document point, treating out-of-bounds as empty. */
+function sampleChannel(layer: Layer, pixels: ImageData, point: Point, channel: number): number {
+  // Into the layer's own pixel space.
+  const sx = point.x - layer.x;
+  const sy = point.y - layer.y;
+  const x0 = Math.floor(sx);
+  const y0 = Math.floor(sy);
+  const fx = sx - x0;
+  const fy = sy - y0;
+  let acc = 0;
+  for (let dy = 0; dy <= 1; dy++) {
+    for (let dx = 0; dx <= 1; dx++) {
+      const px = x0 + dx;
+      const py = y0 + dy;
+      if (px < 0 || py < 0 || px >= layer.width || py >= layer.height) continue;
+      acc += pixels.data[(py * layer.width + px) * 4 + channel] * (dx ? fx : 1 - fx) * (dy ? fy : 1 - fy);
+    }
+  }
+  return acc;
+}
+
+/**
+ * The same row of colours as `samplePathStrip`, as raw RGBA. With a `subject`
+ * mask, each sample keeps only as much opacity as the subject has there, so
+ * background the path crosses drops out of the band.
+ */
+function samplePathRow(source: Layer, points: Point[], columns: number, subject: Layer | null): Uint8ClampedArray {
   const pixels = sourcePixels(source);
+  const mask = subject ? sourcePixels(subject) : null;
   const along = samplePath(points, columns);
   const out = new Uint8ClampedArray(columns * 4);
 
   for (let i = 0; i < columns; i++) {
-    // Into the source layer's own pixel space.
-    const sx = along[i].x - source.x;
-    const sy = along[i].y - source.y;
-
-    const x0 = Math.floor(sx);
-    const y0 = Math.floor(sy);
-    const fx = sx - x0;
-    const fy = sy - y0;
-
-    for (let c = 0; c < 4; c++) {
-      let acc = 0;
-      // Bilinear across the four neighbours, treating out-of-bounds as empty.
-      for (let dy = 0; dy <= 1; dy++) {
-        for (let dx = 0; dx <= 1; dx++) {
-          const px = x0 + dx;
-          const py = y0 + dy;
-          if (px < 0 || py < 0 || px >= source.width || py >= source.height) continue;
-          const w = (dx ? fx : 1 - fx) * (dy ? fy : 1 - fy);
-          acc += pixels.data[(py * source.width + px) * 4 + c] * w;
-        }
-      }
-      out[i * 4 + c] = acc;
-    }
+    for (let c = 0; c < 4; c++) out[i * 4 + c] = sampleChannel(source, pixels, along[i], c);
+    if (subject && mask) out[i * 4 + 3] *= sampleChannel(subject, mask, along[i], 3) / 255;
   }
 
   return out;
+}
+
+/** How much of the path has to run over the subject before a new band reads only the subject. */
+const SUBJECT_COVERAGE = 0.05;
+
+/**
+ * Whether a path runs over the lifted subject enough that its band should
+ * read only the subject. A path laid purely across background stays as it is.
+ */
+export function pathCrossesSubject(points: Point[], subject: Layer): boolean {
+  const mask = sourcePixels(subject);
+  const samples = samplePath(points, 256);
+  const covered = samples.filter((point) => sampleChannel(subject, mask, point, 3) > 127).length;
+  return covered / samples.length >= SUBJECT_COVERAGE;
 }
 
 /** How opaque the band is `t` of the way along its extrusion. */
@@ -125,7 +144,7 @@ function fadeAcross(u: number, soft: number): number {
  * radius (which pixel of the strip) and bearing (how far along the sweep), so
  * the streaks come out as exact concentric arcs with antialiased edges.
  */
-function renderArcBand(spec: StretchSpec, arc: ArcBand, source: Layer): BandRender | null {
+function renderArcBand(spec: StretchSpec, arc: ArcBand, source: Layer, subject: Layer | null): BandRender | null {
   const width = Math.abs(spec.width);
   if (width < MIN_SIZE || Math.abs(arc.sweep) * (arc.radius + width / 2) < MIN_SIZE) return null;
 
@@ -137,7 +156,7 @@ function renderArcBand(spec: StretchSpec, arc: ArcBand, source: Layer): BandRend
   if (outW < MIN_SIZE || outH < MIN_SIZE) return null;
 
   const columns = Math.max(2, Math.round(width));
-  const row = samplePathRow(source, spec.points, columns);
+  const row = samplePathRow(source, spec.points, columns, subject);
   const soft = clamp(spec.edgeSoftness, 0, 0.49);
 
   const output = createCanvas(outW, outH);
@@ -322,8 +341,10 @@ function drawPatch(
  *
  * Returns null when the rectangle is degenerate.
  */
-export function renderStretchBand(spec: StretchSpec, source: Layer): BandRender | null {
-  if (spec.arc) return spec.points.length < 2 ? null : renderArcBand(spec, spec.arc, source);
+export function renderStretchBand(spec: StretchSpec, source: Layer, subject: Layer | null = null): BandRender | null {
+  // The subject only masks the samples when the band asks for it.
+  const mask = spec.subjectOnly ? subject : null;
+  if (spec.arc) return spec.points.length < 2 ? null : renderArcBand(spec, spec.arc, source, mask);
 
   const width = Math.round(Math.abs(spec.width));
   const height = Math.round(Math.abs(spec.length));
@@ -338,7 +359,7 @@ export function renderStretchBand(spec: StretchSpec, source: Layer): BandRender 
   const lctx = local.getContext('2d')!;
   // Every output row is the same row of colours; no resampling wanted.
   lctx.imageSmoothingEnabled = false;
-  lctx.drawImage(samplePathStrip(source, spec.points, width), 0, 0, width, 1, 0, 0, width, height);
+  lctx.drawImage(samplePathStrip(source, spec.points, width, mask), 0, 0, width, 1, 0, 0, width, height);
   shapeAlpha(local, spec);
 
   // Local (0,0) is the anchor on the path for either sign of `length` — the

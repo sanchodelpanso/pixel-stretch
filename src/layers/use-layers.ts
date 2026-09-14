@@ -3,6 +3,7 @@ import type { Layer, LayerDocument } from '../types/layer';
 import type { ExtractMode } from '../types/editor';
 import type { StretchSpec } from '../types/stretch';
 import type { SourceImage } from '../types/image';
+import { pathCrossesSubject } from '../rendering/stretch-band';
 import {
   layerFromImage,
   duplicateLayer,
@@ -11,6 +12,7 @@ import {
   translateLayer,
   createStretchLayer,
   rerenderStretchLayer,
+  protectedSubject,
 } from './layer-utils';
 
 const EMPTY_DOC: LayerDocument = { width: 0, height: 0, layers: [] };
@@ -218,7 +220,9 @@ export function useLayers(): UseLayersReturn {
     const sourceIndex = prev.layers.findIndex((l) => l.id === spec.sourceLayerId);
     if (sourceIndex < 0) return null;
 
-    const band = createStretchLayer(spec, prev.layers[sourceIndex], name ?? 'Stretch');
+    const band = createStretchLayer(
+      spec, prev.layers[sourceIndex], name ?? 'Stretch', protectedSubject(prev.layers, spec.sourceLayerId),
+    );
     if (!band) return null;
 
     // Directly above its source so the generated pixels remain visible.
@@ -242,27 +246,28 @@ export function useLayers(): UseLayersReturn {
     if (sourceIndex < 0) return null;
 
     const source = prev.layers[sourceIndex];
-    const band = createStretchLayer(spec, source, name ?? `${source.name} stretch`);
-    if (!band) return null;
-
-    const layers = [...prev.layers];
-    // Bottom-first: source, stretch, protected subject. Existing protected
-    // subjects stay in place and are reused on later stretches.
-    layers.splice(sourceIndex + 1, 0, band);
-    const existingSubject = prev.layers.find((layer) => layer.protectionSourceId === source.id);
-    if (!existingSubject) {
+    // Existing protected subjects stay in place and are reused on later stretches.
+    const existingSubject = protectedSubject(prev.layers, source.id);
+    let subject = existingSubject;
+    if (!subject) {
       if (!mask || maskWidth < 1 || maskHeight < 1) return null;
-      const subject = extractLayer(
-        source,
-        mask,
-        maskWidth,
-        maskHeight,
-        `${source.name} subject`,
-      );
+      subject = extractLayer(source, mask, maskWidth, maskHeight, `${source.name} subject`);
       if (!subject) return null;
       subject.protectionSourceId = source.id;
-      layers.splice(sourceIndex + 2, 0, subject);
     }
+
+    // A path drawn through the subject stretches only the subject, leaving the
+    // background it crosses on the way clear.
+    const shaped: StretchSpec = spec.subjectOnly === undefined
+      ? { ...spec, subjectOnly: pathCrossesSubject(spec.points, subject) }
+      : spec;
+    const band = createStretchLayer(shaped, source, name ?? `${source.name} stretch`, subject);
+    if (!band) return null;
+
+    // Bottom-first: source, stretch, protected subject.
+    const layers = [...prev.layers];
+    layers.splice(sourceIndex + 1, 0, band);
+    if (!existingSubject) layers.splice(sourceIndex + 2, 0, subject);
 
     commit(() => ({ ...prev, layers }));
     setSelectedId(band.id);
@@ -281,7 +286,9 @@ export function useLayers(): UseLayersReturn {
     const spec: StretchSpec = { ...layer.stretch, ...patch };
     const source = prev.layers.find((l) => l.id === spec.sourceLayerId);
     // Without its source layer the band can't be re-rendered; keep the pixels.
-    const updated = source ? rerenderStretchLayer(layer, spec, source) : { ...layer, stretch: spec };
+    const updated = source
+      ? rerenderStretchLayer(layer, spec, source, protectedSubject(prev.layers, spec.sourceLayerId))
+      : { ...layer, stretch: spec };
     const next: LayerDocument = {
       ...prev,
       layers: prev.layers.map((l) => (l.id === id ? updated : l)),

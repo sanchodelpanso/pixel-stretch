@@ -580,6 +580,8 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
     return arcOutline(arcPull, chordLength(draft.points));
   }, [draft, arcPull]);
 
+  const stretchHasSubject = Boolean(stretchSpec)
+    && doc.layers.some((l) => l.protectionSourceId === stretchSpec!.sourceLayerId && !l.stretch);
   const stretchSource = stretchSpec
     ? doc.layers.find((l) => l.id === stretchSpec.sourceLayerId) ?? null
     : null;
@@ -725,6 +727,7 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
                   onChange={handleStretchChange}
                   onBeginDrag={beginHistory}
                   onUnlock={handleEditPath}
+                  hasSubject={stretchHasSubject}
                 />
               )}
 
@@ -737,6 +740,7 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
                   onChange={handleStretchChange}
                   onBeginDrag={beginHistory}
                   onUnlock={handleEditPath}
+                  hasSubject={stretchHasSubject}
                 />
               )}
 

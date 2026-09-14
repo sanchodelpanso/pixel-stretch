@@ -107,6 +107,12 @@ export interface StretchSpec {
    */
   removedEdge?: RemovableEdge;
   /**
+   * Read only the lifted subject's pixels along the path. Where the path
+   * crosses background — the gap between a body and a leg — the band is
+   * transparent instead of stretching that background.
+   */
+  subjectOnly?: boolean;
+  /**
    * Sweep the band round a pivot instead of pulling it out straight. While set,
    * `width` is the band's radial thickness and the rectangle fields (`anchor`,
    * `length`, `rotation`, warps and bend) are ignored.

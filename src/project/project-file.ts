@@ -235,6 +235,7 @@ function stretch(value: unknown): StretchSpec | undefined {
     ...(value.warpMode ? { warpMode: value.warpMode } : {}),
     ...(edges(value.edges) ? { edges: edges(value.edges) } : {}),
     ...(value.removedEdge !== undefined ? { removedEdge: value.removedEdge } : {}),
+    ...(value.subjectOnly === true ? { subjectOnly: true } : {}),
     ...(value.arc !== undefined ? { arc: arc(value.arc) } : {}),
   };
 }

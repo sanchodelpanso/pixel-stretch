@@ -6,6 +6,7 @@ import {
   edgeOffset, isClosedArc, snapSweep, sweepToward,
 } from '../types/arc-band';
 import { toDegrees } from '../utils/math-utils';
+import { SubjectOnlyToggle } from './SubjectOnlyToggle';
 
 interface StretchArcHandlesProps {
   spec: StretchSpec;
@@ -17,6 +18,8 @@ interface StretchArcHandlesProps {
   onBeginDrag: () => void;
   /** Reopen the path for editing. */
   onUnlock: () => void;
+  /** Whether the band's source has a lifted subject it could read from alone. */
+  hasSubject: boolean;
 }
 
 type Drag =
@@ -61,6 +64,7 @@ export function StretchArcHandles({
   onChange,
   onBeginDrag,
   onUnlock,
+  hasSubject,
 }: StretchArcHandlesProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const dragging = useRef<Drag | null>(null);
@@ -285,6 +289,15 @@ export function StretchArcHandles({
         <text x={11} y={30}>W: {Math.round(width)} px</text>
         <text x={11} y={44}>{degrees >= 360 ? 'Ring 360°' : `${degrees}°`}</text>
       </g>
+
+      {hasSubject && (
+        <SubjectOnlyToggle
+          on={Boolean(spec.subjectOnly)}
+          x={unlockAt.x}
+          y={unlockAt.y + 34}
+          onToggle={() => onChange({ subjectOnly: !spec.subjectOnly }, false)}
+        />
+      )}
 
       <g
         className="rect-unlock"
