@@ -1,0 +1,30 @@
+{
+  "people": {
+    "count": 60,
+    "terms": ["person", "man", "woman", "girl", "boy", "child", "portrait", "surfer", "skateboarder", "hiker", "dancer", "crowd"]
+  },
+  "architecture": {
+    "count": 60,
+    "terms": ["building", "house", "bridge", "tower", "skyscraper", "church", "cathedral", "temple", "mosque", "castle", "lighthouse", "street", "city", "cityscape", "arch", "palace", "ruins"]
+  },
+  "animals": {
+    "count": 40,
+    "terms": ["cat", "kitten", "dog", "puppy", "bird", "horse", "elephant", "butterfly", "duck", "lizard", "cow", "deer", "fox", "owl", "bear", "lion", "giraffe", "zebra", "monkey", "squirrel", "sheep", "fish", "turtle", "penguin", "parrot", "bee"]
+  },
+  "objects_food_vehicles": {
+    "count": 40,
+    "terms": ["car", "van", "truck", "bus", "train", "bicycle", "motorcycle", "boat", "ship", "airplane", "cup", "mug", "bottle", "camera", "shoe", "sneaker", "laptop", "smartphone", "book", "guitar", "food", "fruit", "bread", "cake", "coffee", "pizza", "vegetable", "strawberry", "bowl", "toy"]
+  },
+  "plants": {
+    "count": 35,
+    "terms": ["flower", "rose", "sunflower", "tulip", "daisy", "orchid", "cactus", "succulent", "fern", "leaf", "plant", "mushroom", "palm", "bamboo", "blossom", "moss"]
+  },
+  "landscapes": {
+    "count": 35,
+    "terms": ["mountain", "beach", "forest", "lake", "desert", "waterfall", "coast", "valley", "river", "field", "hill", "canyon", "glacier", "ocean", "sea", "island", "cliff", "dune", "road", "meadow"]
+  },
+  "interiors": {
+    "count": 30,
+    "terms": ["room", "interior", "kitchen", "bedroom", "bed", "sofa", "couch", "desk", "shelf", "bookshelf", "library", "cafe", "restaurant", "hallway", "corridor", "staircase", "stairs", "table", "chair", "workspace", "office", "museum"]
+  }
+}

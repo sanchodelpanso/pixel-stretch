@@ -12,6 +12,7 @@ import { layerImageData, hitTestLayers, docMaskToLayerSpace } from '../layers/la
 import { exportDocument } from '../layers/compositor';
 import { downloadBlob, exportFilename } from '../utils/export-utils';
 import { encodeProject, projectFilename } from '../project/project-file';
+import { rememberProject, RecentStorageFullError } from '../project/recents';
 import { pathToPolyline } from '../rendering/sample-path';
 import { LayerCanvas } from '../editor/LayerCanvas';
 import { SelectionOverlay } from '../editor/SelectionOverlay';
@@ -28,11 +29,18 @@ import logo from '../assets/logo.png';
 import '../editor/StretchOverlays.css';
 import './EditorScreen.css';
 
-type EditorSource =
+export type EditorSource =
   | { kind: 'image'; image: SourceImage }
   | { kind: 'project'; document: LayerDocument; selectedLayerId: string | null };
 
-interface EditorScreenProps { source: EditorSource }
+interface EditorScreenProps {
+  source: EditorSource;
+  /** Name shown in Recent projects once this document is saved. */
+  name: string;
+  /** Stored project this document was opened from, so saving updates it in place. */
+  recentProjectId: string | null;
+  onExit: () => void;
+}
 
 const TOOL_HINTS: Record<EditorTool, string> = {
   move: 'Click a layer to select it · drag to reposition · arrow keys to nudge',
@@ -63,7 +71,7 @@ interface PendingProtectedStretch {
   name: string;
 }
 
-export function EditorScreen({ source }: EditorScreenProps) {
+export function EditorScreen({ source, name, recentProjectId, onExit }: EditorScreenProps) {
   const layers = useLayers();
   const seg = useSegmentation();
   const { doc, selectedLayer, selectedId } = layers;
@@ -84,6 +92,9 @@ export function EditorScreen({ source }: EditorScreenProps) {
   const [isSavingProject, setIsSavingProject] = useState(false);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [pendingStretch, setPendingStretch] = useState<PendingProtectedStretch | null>(null);
+  /** The document as of the last save, to tell whether leaving would lose edits. */
+  const [savedDoc, setSavedDoc] = useState<LayerDocument | null>(null);
+  const recentProjectIdRef = useRef(recentProjectId);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -438,13 +449,29 @@ export function EditorScreen({ source }: EditorScreenProps) {
     try {
       const blob = await encodeProject(doc, selectedId);
       downloadBlob(blob, projectFilename());
-      setNotice(`Project saved · ${doc.layers.length} layer${doc.layers.length === 1 ? '' : 's'}`);
+      setSavedDoc(doc);
+      const layerSummary = `${doc.layers.length} layer${doc.layers.length === 1 ? '' : 's'}`;
+      try {
+        recentProjectIdRef.current = await rememberProject(recentProjectIdRef.current, name, doc, blob);
+        setNotice(`Project saved · ${layerSummary}`);
+      } catch (err) {
+        console.warn('Could not keep project in recents:', err);
+        setNotice(err instanceof RecentStorageFullError
+          ? `Project file saved · ${layerSummary} · too large to keep in Recent projects`
+          : `Project file saved · ${layerSummary} · could not add it to Recent projects`);
+      }
     } catch (err) {
       setNotice(err instanceof Error ? `Project save failed: ${err.message}` : 'Project save failed.');
     } finally {
       setIsSavingProject(false);
     }
-  }, [doc, selectedId, isSavingProject]);
+  }, [doc, selectedId, isSavingProject, name]);
+
+  const handleExit = useCallback(() => {
+    const hasUnsavedEdits = layers.canUndo && doc !== savedDoc;
+    if (hasUnsavedEdits && !window.confirm('Leave the editor? Edits made since the last save will be lost.')) return;
+    onExit();
+  }, [layers.canUndo, doc, savedDoc, onExit]);
 
   // --- Keyboard ------------------------------------------------------------
 
@@ -589,10 +616,10 @@ export function EditorScreen({ source }: EditorScreenProps) {
   return (
     <div className="editor-screen">
       <header className="editor-header">
-        <div className="editor-brand">
+        <button className="editor-brand" aria-label="Back to start" title="Back to start" onClick={handleExit}>
           <img className="editor-logo" src={logo} alt="" />
           PixelStretch
-        </div>
+        </button>
 
         <div className="editor-header-actions">
           <button className="header-btn icon-btn" aria-label="Undo" disabled={!layers.canUndo} title="Undo (⌘Z)" onClick={layers.undo}>

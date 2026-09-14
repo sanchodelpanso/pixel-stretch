@@ -1,10 +1,14 @@
 import { useCallback, useRef, useState } from 'react';
+import type { RecentEntry } from '../project/recents';
 import logo from '../assets/logo.png';
 import './UploadScreen.css';
 
 interface UploadScreenProps {
   onImageSelected: (file: File) => void;
   onProjectSelected: (file: File) => void;
+  recents: RecentEntry[];
+  onOpenRecent: (entry: RecentEntry) => void;
+  onRemoveRecent: (entry: RecentEntry) => void;
   isLoading: boolean;
   loadingStatus: string;
   loadProgress: number;
@@ -26,7 +30,57 @@ function couldBeProject(file: File): boolean {
   return /\.pixelstretch$/i.test(file.name);
 }
 
-export function UploadScreen({ onImageSelected, onProjectSelected, isLoading, loadingStatus, loadProgress, error }: UploadScreenProps) {
+function timeAgo(timestamp: number): string {
+  const minutes = Math.round((Date.now() - timestamp) / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.round(hours / 24);
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days} days ago`;
+  return new Date(timestamp).toLocaleDateString();
+}
+
+interface RecentSectionProps {
+  title: string;
+  entries: RecentEntry[];
+  onOpen: (entry: RecentEntry) => void;
+  onRemove: (entry: RecentEntry) => void;
+}
+
+function RecentSection({ title, entries, onOpen, onRemove }: RecentSectionProps) {
+  if (entries.length === 0) return null;
+  return (
+    <section className="recent-section" aria-label={title}>
+      <h2 className="recent-title">{title}</h2>
+      <ul className="recent-grid">
+        {entries.map((entry) => (
+          <li key={entry.id} className="recent-card">
+            <button className="recent-open" onClick={() => onOpen(entry)} title={`Open ${entry.name}`}>
+              <img className="recent-thumb" src={entry.thumbnail} alt="" />
+              <span className="recent-name">{entry.name}</span>
+              <span className="recent-meta">
+                {entry.kind === 'project'
+                  ? `${entry.layerCount ?? 1} layer${entry.layerCount === 1 ? '' : 's'}`
+                  : `${entry.width}×${entry.height}`}
+                {' · '}
+                {timeAgo(entry.updatedAt)}
+              </span>
+            </button>
+            <button className="recent-remove" aria-label={`Remove ${entry.name} from recents`} title="Remove" onClick={() => onRemove(entry)}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+export function UploadScreen({
+  onImageSelected, onProjectSelected, recents, onOpenRecent, onRemoveRecent, isLoading, loadingStatus, loadProgress, error,
+}: UploadScreenProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
@@ -132,6 +186,23 @@ export function UploadScreen({ onImageSelected, onProjectSelected, isLoading, lo
           onChange={handleProjectChange}
           hidden
         />
+
+        {!isLoading && (
+          <>
+            <RecentSection
+              title="Recent projects"
+              entries={recents.filter((entry) => entry.kind === 'project')}
+              onOpen={onOpenRecent}
+              onRemove={onRemoveRecent}
+            />
+            <RecentSection
+              title="Recent images"
+              entries={recents.filter((entry) => entry.kind === 'image')}
+              onOpen={onOpenRecent}
+              onRemove={onRemoveRecent}
+            />
+          </>
+        )}
       </div>
 
       {/* Decorative monochrome background depth. */}

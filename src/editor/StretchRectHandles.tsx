@@ -70,7 +70,7 @@ export function StretchRectHandles({
 }: StretchRectHandlesProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   type Drag =
-    | { kind: 'handle'; id: HandleId }
+    | { kind: 'handle'; id: HandleId; start: Point; width: number; length: number; anchor: Point }
     | { kind: 'warp'; corner: number }
     | { kind: 'edge'; edge: number; control: 0 | 1 }
     | { kind: 'bend'; start: Point; initial: number }
@@ -159,29 +159,31 @@ export function StretchRectHandles({
     }
 
     const handle = HANDLES[drag.id];
-    // Pointer position in the rectangle's own frame, relative to the anchor.
-    const rel = { x: point.x - spec.anchor.x, y: point.y - spec.anchor.y };
-    const u = rel.x * along.x + rel.y * along.y;
-    const v = rel.x * out.x + rel.y * out.y;
+    // Pointer travel since the grab, in the rectangle's own frame. Relative,
+    // because a skewed band draws its edge handles away from the rectangle's
+    // true edges — an absolute reading would jump by the skew on first move.
+    const moved = { x: point.x - drag.start.x, y: point.y - drag.start.y };
+    const du = moved.x * along.x + moved.y * along.y;
+    const dv = moved.x * out.x + moved.y * out.y;
 
     const patch: Partial<StretchSpec> = {};
-    let anchor = { ...spec.anchor };
+    let anchor = { ...drag.anchor };
 
     if (handle.movesW) {
       if (handle.u === 0) {
         // Dragging the near edge moves the anchor and shrinks the span.
-        patch.width = spec.width - u;
-        anchor = { x: anchor.x + along.x * u, y: anchor.y + along.y * u };
+        patch.width = drag.width - du;
+        anchor = { x: anchor.x + along.x * du, y: anchor.y + along.y * du };
       } else {
-        patch.width = u;
+        patch.width = drag.width + du;
       }
     }
     if (handle.movesL) {
       if (handle.v === 0) {
-        patch.length = spec.length - v;
-        anchor = { x: anchor.x + out.x * v, y: anchor.y + out.y * v };
+        patch.length = drag.length - dv;
+        anchor = { x: anchor.x + out.x * dv, y: anchor.y + out.y * dv };
       } else {
-        patch.length = v;
+        patch.length = drag.length + dv;
       }
     }
     if (anchor.x !== spec.anchor.x || anchor.y !== spec.anchor.y) patch.anchor = anchor;
@@ -326,9 +328,15 @@ export function StretchRectHandles({
             x={p.x - 5} y={p.y - 5} width={10} height={10}
             onPointerDown={(e) => {
               const cornerIndex = CORNER_ORDER[id];
-              startDrag(cornerIndex === undefined
-                ? { kind: 'handle', id }
-                : { kind: 'warp', corner: cornerIndex })(e);
+              if (cornerIndex !== undefined) {
+                startDrag({ kind: 'warp', corner: cornerIndex })(e);
+                return;
+              }
+              const start = toDoc(e.clientX, e.clientY);
+              if (!start) return;
+              startDrag({
+                kind: 'handle', id, start, width: spec.width, length: spec.length, anchor: spec.anchor,
+              })(e);
             }}
           />
         );

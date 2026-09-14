@@ -1,14 +1,15 @@
 .upload-screen {
   position: relative;
   width: 100%;
-  min-height: 100vh;
-  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
   display: flex;
-  align-items: center;
   justify-content: center;
   background:
     radial-gradient(circle at 50% 15%, #242424 0, #111 42%, #090909 100%);
-  overflow: hidden;
+  /* Recents can outgrow the viewport; the body itself never scrolls. */
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .upload-content {
@@ -17,7 +18,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: min(100%, 620px);
+  width: min(100%, 760px);
+  margin-block: auto;
   gap: 18px;
   padding: max(32px, env(safe-area-inset-top)) 32px max(32px, env(safe-area-inset-bottom));
 }
@@ -185,9 +187,133 @@
   color: #fff;
 }
 
+/* --- Recents --- */
+
+.recent-section {
+  width: min(100%, 700px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.recent-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.recent-grid {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.recent-card {
+  position: relative;
+  min-width: 0;
+}
+
+.recent-open {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.recent-open:hover,
+.recent-open:focus-visible {
+  border-color: rgba(255, 255, 255, 0.36);
+  background: rgba(255, 255, 255, 0.08);
+  transform: translateY(-2px);
+}
+
+.recent-thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #0b0b0b;
+  margin-bottom: 5px;
+}
+
+.recent-name,
+.recent-meta {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding-inline: 2px;
+}
+
+.recent-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.recent-meta {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.recent-remove {
+  position: absolute;
+  top: 13px;
+  right: 13px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.recent-remove svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+.recent-card:hover .recent-remove,
+.recent-remove:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .recent-remove {
+    opacity: 1;
+  }
+}
+
 @media (max-width: 760px) {
-  .upload-screen {
-    align-items: stretch;
+  .upload-content {
+    min-height: 100%;
+  }
+
+  .recent-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
   }
 
   .upload-content {

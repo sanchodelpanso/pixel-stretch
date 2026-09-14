@@ -266,8 +266,80 @@ export function skewCorner(
   target: Point,
 ): Pick<StretchSpec, 'warp' | 'warpMode' | 'bend'> {
   const warp = (spec.warp ?? NO_WARP).map((offset) => ({ ...offset })) as Warp;
-  warp[corner] = toWarpOffset(spec, corner, target);
+  warp[corner] = toWarpOffset(spec, corner, convexCornerTarget(spec, corner, target));
   return { warp, warpMode: 'straight', bend: 0 };
+}
+
+/** How much a vertex turns: positive or negative by winding, zero when straight. */
+function turnAt(previous: Point, at: Point, next: Point): number {
+  return (at.x - previous.x) * (next.y - at.y) - (at.y - previous.y) * (next.x - at.x);
+}
+
+/**
+ * Whether the quad is strictly convex. The straight-mode homography is only
+ * well-behaved for convex quads — past that its horizon cuts through the band
+ * and points are thrown out towards infinity.
+ */
+export function isConvexQuad(quad: [Point, Point, Point, Point]): boolean {
+  const turns = quad.map((point, i) => turnAt(quad[(i + 3) % 4], point, quad[(i + 1) % 4]));
+  return turns.every((t) => t > 0) || turns.every((t) => t < 0);
+}
+
+/**
+ * Keep a dragged straight-mode corner where the quad stays convex, with a small
+ * margin so it never quite flattens into a triangle. With the other three
+ * corners fixed, the allowed spots are the intersection of three half-planes,
+ * so the corner slides along whichever limit it runs into.
+ */
+function convexCornerTarget(spec: StretchSpec, corner: number, target: Point): Point {
+  const quad = warpedCorners(spec);
+  const previous = quad[(corner + 3) % 4];
+  const next = quad[(corner + 1) % 4];
+  const opposite = quad[(corner + 2) % 4];
+  const rect = bandCorners(spec);
+  const winding = Math.sign(turnAt(rect[3], rect[0], rect[1])) || 1;
+  const margin = Math.max(1, 0.02 * Math.min(Math.abs(spec.width), Math.abs(spec.length)));
+
+  // Each limit: the corner must sit at least `margin` on the winding side of
+  // the line through `origin` along `direction`.
+  const limits = [
+    { origin: previous, direction: { x: previous.x - opposite.x, y: previous.y - opposite.y } },
+    { origin: next, direction: { x: opposite.x - next.x, y: opposite.y - next.y } },
+    { origin: previous, direction: { x: previous.x - next.x, y: previous.y - next.y } },
+  ].filter(({ direction }) => Math.hypot(direction.x, direction.y) > 1e-9);
+  const clearance = (p: Point, { origin, direction }: typeof limits[number]) => {
+    const length = Math.hypot(direction.x, direction.y);
+    return winding * (direction.x * (p.y - origin.y) - direction.y * (p.x - origin.x)) / length;
+  };
+  const allowed = (p: Point) => limits.every((limit) => clearance(p, limit) >= margin - 1e-6);
+
+  let point = { ...target };
+  for (let pass = 0; pass < 16 && !allowed(point); pass++) {
+    for (const limit of limits) {
+      const short = margin - clearance(point, limit);
+      if (short <= 0) continue;
+      const length = Math.hypot(limit.direction.x, limit.direction.y);
+      point = {
+        x: point.x - (winding * limit.direction.y / length) * short,
+        y: point.y + (winding * limit.direction.x / length) * short,
+      };
+    }
+  }
+  if (allowed(point)) return point;
+
+  // Limits that can't all be met (a band already folded some other way): walk
+  // from where the corner is now towards the pointer as far as stays valid.
+  const current = quad[corner];
+  if (!allowed(current)) return current;
+  let lo = 0;
+  let hi = 1;
+  for (let step = 0; step < 24; step++) {
+    const mid = (lo + hi) / 2;
+    const candidate = { x: current.x + (target.x - current.x) * mid, y: current.y + (target.y - current.y) * mid };
+    if (allowed(candidate)) lo = mid;
+    else hi = mid;
+  }
+  return { x: current.x + (target.x - current.x) * lo, y: current.y + (target.y - current.y) * lo };
 }
 
 /** Whether the band is distorted away from a plain rectangle. */

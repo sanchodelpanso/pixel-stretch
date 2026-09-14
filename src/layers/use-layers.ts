@@ -328,21 +328,38 @@ export function useLayers(): UseLayersReturn {
     return extracted.id;
   }, [commit]);
 
+  /**
+   * Publish a history state without leaving the selection on a layer it
+   * doesn't contain — tools that act on the selected layer would go dead.
+   * A vanished band or lifted subject hands selection back to its source.
+   */
+  const publishHistoryState = useCallback((next: LayerDocument) => {
+    const current = docRef.current;
+    publish(next);
+    setSelectedId((id) => {
+      if (id && next.layers.some((layer) => layer.id === id)) return id;
+      const gone = current.layers.find((layer) => layer.id === id);
+      const fallbackId = gone?.stretch?.sourceLayerId ?? gone?.protectionSourceId;
+      if (fallbackId && next.layers.some((layer) => layer.id === fallbackId)) return fallbackId;
+      return next.layers[next.layers.length - 1]?.id ?? null;
+    });
+  }, [publish]);
+
   const undo = useCallback(() => {
     if (!past.current.length) return;
     const previous = past.current[past.current.length - 1];
     past.current = past.current.slice(0, -1);
     future.current = [...future.current, docRef.current];
-    publish(previous);
-  }, [publish]);
+    publishHistoryState(previous);
+  }, [publishHistoryState]);
 
   const redo = useCallback(() => {
     if (!future.current.length) return;
     const next = future.current[future.current.length - 1];
     future.current = future.current.slice(0, -1);
     past.current = [...past.current, docRef.current];
-    publish(next);
-  }, [publish]);
+    publishHistoryState(next);
+  }, [publishHistoryState]);
 
   const selectedLayer = useMemo(
     () => doc.layers.find((l) => l.id === selectedId) ?? null,

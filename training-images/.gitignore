@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+images/
+excluded/
+thumbnails/
+contact-sheets/
+cache/
+manifest.json
+summary.json
+errors.jsonl
+index.html
+*.log

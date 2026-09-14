@@ -1,6 +1,6 @@
 import type { Layer } from '../types/layer';
 import type { StretchSpec, Point } from '../types/stretch';
-import { rectBasis, bandCorners, warpedCorners, isWarped, hasCurvedEdges } from '../types/stretch';
+import { rectBasis, bandCorners, warpedCorners, isWarped, hasCurvedEdges, isConvexQuad } from '../types/stretch';
 import type { ArcBand } from '../types/arc-band';
 import { arcBounds, arcLookup } from '../types/arc-band';
 import { bendPoint } from './projection';
@@ -206,33 +206,14 @@ function shapeAlpha(canvas: HTMLCanvasElement, spec: StretchSpec): void {
   ctx.globalCompositeOperation = 'source-over';
 }
 
-/** Boundary samples used to bound a warped or bent band. */
-const OUTLINE_STEPS = 64;
-
 /**
- * Grid resolution for the curved-surface renderer, in cells per axis. A fold
- * curves as sharply along the band as across it, so both axes need the same.
+ * Grid resolution for distorted bands, in cells per axis. A fold curves as
+ * sharply along the band as across it, and perspective magnifies as strongly,
+ * so both axes need the same.
  */
 const PATCH_CELLS = 72;
 
-/**
- * Trace the band's projected outline. A bend pushes columns past the quad's
- * own corners, so the bounding box has to come from the real edges rather
- * than from four points.
- */
-function projectedOutline(spec: StretchSpec, at: SurfaceMap): Point[] {
-  const outline: Point[] = [];
-  for (let i = 0; i <= OUTLINE_STEPS; i++) {
-    // Each column stays a straight segment, so its two ends bound it.
-    for (const v of [0, 1]) {
-      const point = bendPoint(i / OUTLINE_STEPS, v, spec.bend);
-      outline.push(at(point.x, point.y));
-    }
-  }
-  return outline;
-}
-
-/** A curved band diced into cells: `points[row][column]` in document space. */
+/** A distorted band diced into cells: `points[row][column]` in document space. */
 interface PatchMesh {
   cols: number;
   rows: number;
@@ -267,14 +248,18 @@ function patchMesh(spec: StretchSpec, at: SurfaceMap, width: number, height: num
 }
 
 /**
- * Draw the band across a curved sheet.
+ * Draw the band across a distorted surface — a Bézier sheet, a perspective
+ * skew or a cylindrical bend.
  *
- * A Bézier sheet bends columns as well as displacing them, so unlike the
- * projective case a column is no longer a straight segment and one affine per
- * column won't do. The band is diced into a grid instead, each cell mapped by
- * the affine through three of its corners — which converges quickly because
- * the surface is smooth. Cells are drawn a touch oversized so their neighbours
- * cover the seams.
+ * The band is diced into a grid, each cell mapped by the affine through three
+ * of its corners, which converges quickly because the surface is smooth.
+ * Cells are drawn a touch oversized so their neighbours cover the seams.
+ *
+ * One affine per source column would be exact for a skew, but a column is
+ * only a pixel wide at the sample line: where perspective widens the far end
+ * the columns spread into separate streaks with gaps between, and where it
+ * narrows hundreds of them pile onto a few pixels and alias into moiré.
+ * Cells stay a few pixels across in the source, so smoothing covers both.
  *
  * A corner pulled far enough folds the sheet over itself. Cells go down in
  * order of how far they moved from the flat rectangle, so the folded-over flap
@@ -327,57 +312,6 @@ function drawPatch(
 }
 
 /**
- * Draw the band through a projective map, one column at a time.
- *
- * A homography takes straight lines to straight lines, so each column of the
- * upright band lands as a straight segment — which is why the streaks stay
- * straight however the quad is pulled about. Each column gets its own affine
- * approximation, exact for that column's own geometry, and is drawn one pixel
- * wider than its slot so the next column covers the seam.
- */
-function drawProjected(
-  ctx: CanvasRenderingContext2D,
-  local: HTMLCanvasElement,
-  spec: StretchSpec,
-  at: SurfaceMap,
-  offsetX: number,
-  offsetY: number,
-): void {
-  const { width, height } = local;
-
-  for (let i = 0; i < width; i++) {
-    const nearTop = bendPoint(i / width, 0, spec.bend);
-    const farTop = bendPoint((i + 1) / width, 0, spec.bend);
-    const nearBottom = bendPoint(i / width, 1, spec.bend);
-
-    const topLeft = at(nearTop.x, nearTop.y);
-    const topRight = at(farTop.x, farTop.y);
-    const bottomLeft = at(nearBottom.x, nearBottom.y);
-
-    let ax = topRight.x - topLeft.x;
-    let ay = topRight.y - topLeft.y;
-    const span = Math.hypot(ax, ay);
-    if (!Number.isFinite(span) || span === 0) continue;
-    // Overdraw by a pixel; the next column paints over the excess.
-    const widen = (span + 1) / span;
-    ax *= widen;
-    ay *= widen;
-
-    const cx = (bottomLeft.x - topLeft.x) / height;
-    const cy = (bottomLeft.y - topLeft.y) / height;
-    if (![ax, ay, cx, cy].every(Number.isFinite)) continue;
-
-    ctx.setTransform(
-      ax, ay, cx, cy,
-      topLeft.x - ax * i + offsetX,
-      topLeft.y - ay * i + offsetY,
-    );
-    ctx.drawImage(local, i, 0, 1, height, i, 0, 1, height);
-  }
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-}
-
-/**
  * Render a stretch band to its own bitmap.
  *
  * The band is built upright in local space — the sampled row across the top,
@@ -411,17 +345,22 @@ export function renderStretchBand(spec: StretchSpec, source: Layer): BandRender 
   // side is carried entirely by `outSigned`, so the origin never moves.
   const origin: Point = spec.anchor;
   const curved = hasCurvedEdges(spec);
-  const projected = curved || isWarped(spec) || spec.bend !== 0;
+  const distorted = curved || isWarped(spec) || spec.bend !== 0;
 
   // The corner order already matches local (0,0)→(w,0)→(w,h)→(0,h): local
   // (0,height) lands on corner 3 for either sign of `length`, because
   // `outSigned` and `|length|` flip together.
   const quad = warpedCorners(spec);
+  // A non-convex quad throws the homography's points out towards infinity —
+  // an unbounded canvas. Keep the last good pixels instead (e.g. a width
+  // slider shrinking a skewed band past its own corners).
+  if (!curved && distorted && !isConvexQuad(quad)) return null;
   const at = bandSurface(spec);
-  // A folded sheet can reach past its own outline, so bound it by every vertex.
-  const mesh = curved ? patchMesh(spec, at, width, height) : null;
+  // A folded sheet or a bend can reach past the quad's own corners, so bound
+  // it by every vertex.
+  const mesh = distorted ? patchMesh(spec, at, width, height) : null;
 
-  const bounds = mesh ? mesh.points.flat() : projected ? projectedOutline(spec, at) : quad;
+  const bounds = mesh ? mesh.points.flat() : quad;
   const minX = Math.floor(Math.min(...bounds.map((c) => c.x)) + PIXEL_EPSILON);
   const minY = Math.floor(Math.min(...bounds.map((c) => c.y)) + PIXEL_EPSILON);
   const maxX = Math.ceil(Math.max(...bounds.map((c) => c.x)) - PIXEL_EPSILON);
@@ -434,8 +373,6 @@ export function renderStretchBand(spec: StretchSpec, source: Layer): BandRender 
 
   if (mesh) {
     drawPatch(octx, local, mesh, -minX, -minY);
-  } else if (projected) {
-    drawProjected(octx, local, spec, at, -minX, -minY);
   } else {
     // Undistorted: one blit, columns of the matrix are the local axes.
     octx.setTransform(
