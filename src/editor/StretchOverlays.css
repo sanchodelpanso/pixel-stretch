@@ -331,3 +331,93 @@
   stroke-width: 1.75;
   stroke-linecap: round;
 }
+
+/* --- Arc (swept) bands --- */
+
+.stretch-arc-handles .rect-outline {
+  /* A closed ring is two loops; the hole must stay see-through. */
+  fill-rule: evenodd;
+}
+
+.arc-centreline {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.45);
+  stroke-width: 1;
+  stroke-dasharray: 5 4;
+  pointer-events: none;
+}
+
+.arc-spoke {
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  pointer-events: none;
+}
+
+.arc-radius-handle {
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.arc-radius-handle > circle:first-of-type {
+  fill: rgba(10, 10, 15, 0.88);
+  stroke: #fff;
+  stroke-width: 1.5;
+}
+
+.arc-radius-handle.pinned > circle:first-of-type {
+  stroke-dasharray: 3 2;
+}
+
+.arc-radius-dot {
+  fill: #fff;
+}
+
+.arc-sweep-handle {
+  fill: var(--accent);
+  stroke: rgba(10, 10, 15, 0.9);
+  stroke-width: 2;
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.arc-sweep-handle.closed {
+  fill: rgba(10, 10, 15, 0.88);
+  stroke: #fff;
+  stroke-dasharray: 3 2;
+}
+
+.arc-radius-handle:active,
+.arc-sweep-handle:active {
+  cursor: grabbing;
+}
+
+.stretch-band-mode {
+  position: absolute;
+  z-index: 8;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border-hover);
+  border-radius: 9px;
+  background: rgba(10, 10, 15, 0.88);
+  pointer-events: auto;
+}
+
+.stretch-band-mode button {
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: 600 11px/1 'Inter', system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.stretch-band-mode button.active {
+  background: var(--accent);
+  color: #0a0a0f;
+}

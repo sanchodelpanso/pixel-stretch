@@ -1,6 +1,8 @@
 import type { Layer } from '../types/layer';
 import type { StretchSpec, Point } from '../types/stretch';
 import { rectBasis, bandCorners, warpedCorners, isWarped, hasCurvedEdges } from '../types/stretch';
+import type { ArcBand } from '../types/arc-band';
+import { arcBounds, arcLookup } from '../types/arc-band';
 import { bendPoint } from './projection';
 import { bandSurface } from './surface';
 import type { SurfaceMap } from './surface';
@@ -58,12 +60,19 @@ function createCanvas(width: number, height: number): HTMLCanvasElement {
  * reaching for new ones. Sampling is bilinear so a curve doesn't stairstep.
  */
 function samplePathStrip(source: Layer, points: Point[], columns: number): HTMLCanvasElement {
-  const pixels = sourcePixels(source);
-  const along = samplePath(points, columns);
-
   const strip = createCanvas(columns, 1);
   const ctx = strip.getContext('2d')!;
   const out = ctx.createImageData(columns, 1);
+  out.data.set(samplePathRow(source, points, columns));
+  ctx.putImageData(out, 0, 0);
+  return strip;
+}
+
+/** The same row of colours as `samplePathStrip`, as raw RGBA. */
+function samplePathRow(source: Layer, points: Point[], columns: number): Uint8ClampedArray {
+  const pixels = sourcePixels(source);
+  const along = samplePath(points, columns);
+  const out = new Uint8ClampedArray(columns * 4);
 
   for (let i = 0; i < columns; i++) {
     // Into the source layer's own pixel space.
@@ -87,12 +96,77 @@ function samplePathStrip(source: Layer, points: Point[], columns: number): HTMLC
           acc += pixels.data[(py * source.width + px) * 4 + c] * w;
         }
       }
-      out.data[i * 4 + c] = acc;
+      out[i * 4 + c] = acc;
     }
   }
 
-  ctx.putImageData(out, 0, 0);
-  return strip;
+  return out;
+}
+
+/** How opaque the band is `t` of the way along its extrusion. */
+function fadeAlong(t: number, fade: number, soft: number): number {
+  const far = clamp(1 - fade, 0, 1);
+  if (soft <= 0) return 1 + (far - 1) * t;
+  const knee = 1 - soft;
+  return t < knee ? 1 + (far - 1) * (t / knee) : far * (1 - (t - knee) / soft);
+}
+
+/** Softening across the band: ramps in over `soft` at either end of the row. */
+function fadeAcross(u: number, soft: number): number {
+  if (soft <= 0) return 1;
+  return Math.min(1, u / soft, (1 - u) / soft);
+}
+
+/**
+ * Render a band swept round a pivot.
+ *
+ * Every column of the strip travels round the same centre, so the band is a
+ * slice of a ring. It is drawn by inverse mapping: each output pixel finds its
+ * radius (which pixel of the strip) and bearing (how far along the sweep), so
+ * the streaks come out as exact concentric arcs with antialiased edges.
+ */
+function renderArcBand(spec: StretchSpec, arc: ArcBand, source: Layer): BandRender | null {
+  const width = Math.abs(spec.width);
+  if (width < MIN_SIZE || Math.abs(arc.sweep) * (arc.radius + width / 2) < MIN_SIZE) return null;
+
+  const bounds = arcBounds(arc, width);
+  const minX = Math.floor(bounds.minX) - 1;
+  const minY = Math.floor(bounds.minY) - 1;
+  const outW = Math.ceil(bounds.maxX) + 1 - minX;
+  const outH = Math.ceil(bounds.maxY) + 1 - minY;
+  if (outW < MIN_SIZE || outH < MIN_SIZE) return null;
+
+  const columns = Math.max(2, Math.round(width));
+  const row = samplePathRow(source, spec.points, columns);
+  const soft = clamp(spec.edgeSoftness, 0, 0.49);
+
+  const output = createCanvas(outW, outH);
+  const octx = output.getContext('2d')!;
+  const image = octx.createImageData(outW, outH);
+  const data = image.data;
+
+  const lookup = arcLookup(arc, width);
+  for (let y = 0; y < outH; y++) {
+    for (let x = 0; x < outW; x++) {
+      const hit = lookup(minX + x + 0.5, minY + y + 0.5);
+      if (!hit) continue;
+
+      const position = hit.u * (columns - 1);
+      const left = Math.min(columns - 2, Math.floor(position));
+      const mix = position - left;
+      const alpha = hit.coverage * fadeAlong(hit.t, spec.fade, soft) * fadeAcross(hit.u, soft);
+      const i = (y * outW + x) * 4;
+      const a = left * 4;
+      const b = a + 4;
+      data[i] = row[a] + (row[b] - row[a]) * mix;
+      data[i + 1] = row[a + 1] + (row[b + 1] - row[a + 1]) * mix;
+      data[i + 2] = row[a + 2] + (row[b + 2] - row[a + 2]) * mix;
+      data[i + 3] = (row[a + 3] + (row[b + 3] - row[a + 3]) * mix) * alpha;
+    }
+  }
+
+  octx.putImageData(image, 0, 0);
+  return { canvas: output, x: minX, y: minY };
 }
 
 /**
@@ -315,6 +389,8 @@ function drawProjected(
  * Returns null when the rectangle is degenerate.
  */
 export function renderStretchBand(spec: StretchSpec, source: Layer): BandRender | null {
+  if (spec.arc) return spec.points.length < 2 ? null : renderArcBand(spec, spec.arc, source);
+
   const width = Math.round(Math.abs(spec.width));
   const height = Math.round(Math.abs(spec.length));
   if (spec.points.length < 2 || width < MIN_SIZE || height < MIN_SIZE) return null;

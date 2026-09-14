@@ -223,6 +223,12 @@ export function translateLayer(layer: Layer, dx: number, dy: number): Layer {
       ...layer.stretch,
       points: layer.stretch.points.map((p) => ({ x: p.x + dx, y: p.y + dy })),
       anchor: { x: layer.stretch.anchor.x + dx, y: layer.stretch.anchor.y + dy },
+      ...(layer.stretch.arc ? {
+        arc: {
+          ...layer.stretch.arc,
+          origin: { x: layer.stretch.arc.origin.x + dx, y: layer.stretch.arc.origin.y + dy },
+        },
+      } : {}),
     };
   }
   return moved;

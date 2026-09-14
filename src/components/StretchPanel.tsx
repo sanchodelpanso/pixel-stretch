@@ -2,6 +2,7 @@ import { useCallback, useRef } from 'react';
 import type { Layer } from '../types/layer';
 import type { StretchSpec } from '../types/stretch';
 import { chordAngle, isWarped, hasCurvedEdges, NO_WARP, NO_EDGE_WARP } from '../types/stretch';
+import { FULL_TURN, clampRadius, isClosedArc } from '../types/arc-band';
 import { toRadians } from '../utils/math-utils';
 import { pathToPolyline, polylineLength } from '../rendering/sample-path';
 import { toDegrees } from '../utils/math-utils';
@@ -69,12 +70,78 @@ export function StretchPanel({
   onBeginEdit,
   onEditPath,
 }: StretchPanelProps) {
-  const arc = Math.round(polylineLength(pathToPolyline(spec.points)));
+  const arcLength = Math.round(polylineLength(pathToPolyline(spec.points)));
   const angle = Math.round(toDegrees(chordAngle(spec.points)));
 
   const flip = useCallback(() => {
     onChange({ length: -spec.length }, false);
   }, [spec.length, onChange]);
+
+  if (spec.arc) {
+    const arc = spec.arc;
+    const closed = isClosedArc(arc);
+    const turnSign = arc.sweep < 0 ? -1 : 1;
+    return (
+      <section className="panel-section stretch-section">
+        <div className="panel-section-title">
+          Stretch <span className="stretch-badge">{layer.name}</span>
+        </div>
+
+        <div className="stretch-readout">
+          <span>
+            Path {arcLength}px · swept {closed ? 'into a ring' : `${Math.round(toDegrees(Math.abs(arc.sweep)))}°`}
+          </span>
+          {sourceName ? (
+            <span>from {sourceName}</span>
+          ) : (
+            <span className="stretch-warning">source layer is gone</span>
+          )}
+        </div>
+
+        <Slider
+          label="Width" value={spec.width} min={1} max={Math.max(1, Math.round(arc.radius * 2))} step={1}
+          format={(v) => `${Math.round(v)}px`}
+          onInput={(v, t) => onChange({ width: v }, t)}
+          onBeginEdit={onBeginEdit}
+        />
+        <Slider
+          label="Radius" value={Math.round(arc.radius)}
+          min={Math.ceil(Math.abs(spec.width) / 2)} max={Math.max(maxLength * 2, Math.round(arc.radius))} step={1}
+          format={(v) => `${Math.round(v)}px`}
+          onInput={(v, t) => onChange({ arc: { ...arc, radius: clampRadius(v, spec.width) } }, t)}
+          onBeginEdit={onBeginEdit}
+        />
+        <Slider
+          label="Sweep" value={Math.round(toDegrees(Math.abs(arc.sweep)))} min={1} max={360} step={1}
+          format={(v) => `${Math.round(v)}°`}
+          onInput={(v, t) => onChange({ arc: { ...arc, sweep: turnSign * toRadians(v) } }, t)}
+          onBeginEdit={onBeginEdit}
+        />
+        <Slider
+          label="Fade" value={spec.fade} min={0} max={1} step={0.01}
+          format={(v) => `${Math.round(v * 100)}%`}
+          onInput={(v, t) => onChange({ fade: v }, t)}
+          onBeginEdit={onBeginEdit}
+        />
+        <Slider
+          label="Softness" value={spec.edgeSoftness} min={0} max={0.5} step={0.005}
+          format={(v) => `${Math.round(v * 100)}%`}
+          onInput={(v, t) => onChange({ edgeSoftness: v }, t)}
+          onBeginEdit={onBeginEdit}
+        />
+
+        <div className="stretch-actions">
+          <button onClick={onEditPath}>Edit path</button>
+          <button onClick={() => onChange({ arc: { ...arc, sweep: -arc.sweep } }, false)}>Flip direction</button>
+          <button
+            onClick={() => onChange({ arc: { ...arc, sweep: turnSign * (closed ? Math.PI : FULL_TURN) } }, false)}
+          >
+            {closed ? 'Open ring' : 'Close ring'}
+          </button>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="panel-section stretch-section">
@@ -84,7 +151,7 @@ export function StretchPanel({
 
       <div className="stretch-readout">
         <span>
-          Path {arc}px · {spec.points.length} point{spec.points.length === 1 ? '' : 's'} · {angle}°
+          Path {arcLength}px · {spec.points.length} point{spec.points.length === 1 ? '' : 's'} · {angle}°
         </span>
         {spec.rotation !== 0 && (
           <span>Rectangle turned {Math.round(toDegrees(spec.rotation))}° off the path</span>

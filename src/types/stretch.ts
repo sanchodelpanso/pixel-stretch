@@ -1,3 +1,5 @@
+import type { ArcBand } from './arc-band.ts';
+
 export interface Point {
   x: number;
   y: number;
@@ -90,6 +92,12 @@ export interface StretchSpec {
    * as offsets from the straight-edge thirds. Only meaningful in curved mode.
    */
   edges?: EdgeWarp;
+  /**
+   * Sweep the band round a pivot instead of pulling it out straight. While set,
+   * `width` is the band's radial thickness and the rectangle fields (`anchor`,
+   * `length`, `rotation`, warps and bend) are ignored.
+   */
+  arc?: ArcBand;
 }
 
 export const DEFAULT_STRETCH = {

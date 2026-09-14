@@ -18,6 +18,9 @@ Open the printed localhost URL and choose a JPEG, PNG, WebP, or HEIC photo. The 
 - **Brush:** paint approximately over an object to provide a bounding-box prompt to SlimSAM. Hold Alt to erase brush strokes.
 - **Copy / Cut to new layer:** extracts the selection. Hide the Background layer before exporting a transparent cutout.
 - **Stretch:** draw a sample path, shape and lock it, then drag to pull out a band.
+  Switch to **Arc** before dragging to sweep the band round a pivot instead; curl back
+  to the start to close a ring, then use the centre, square and round handles to set
+  radius, width and sweep.
 
 Automatically lifted subjects use a narrow inward feather to blend their edges
 into the stretch while retaining sharp interior detail. Preview and PNG export

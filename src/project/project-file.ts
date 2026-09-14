@@ -1,5 +1,6 @@
 import type { Layer, LayerDocument } from '../types/layer';
 import type { EdgeWarp, Point, StretchSpec, Warp } from '../types/stretch';
+import type { ArcBand } from '../types/arc-band';
 import { createCanvas, makeThumbnail } from '../layers/layer-utils';
 
 export const PROJECT_FORMAT = 'com.pixelstretch.project';
@@ -174,6 +175,25 @@ function edges(value: unknown): EdgeWarp | undefined {
   }) as EdgeWarp;
 }
 
+function arc(value: unknown): ArcBand | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || typeof value.outward !== 'boolean') {
+    throw new Error('Project stretch arc is invalid.');
+  }
+  const radius = finiteNumber(value.radius, 'stretch.arc.radius');
+  const sweep = finiteNumber(value.sweep, 'stretch.arc.sweep');
+  if (radius <= 0 || Math.abs(sweep) > Math.PI * 2 + 1e-9) {
+    throw new Error('Project stretch arc is out of range.');
+  }
+  return {
+    origin: point(value.origin, 'stretch.arc.origin'),
+    angle: finiteNumber(value.angle, 'stretch.arc.angle'),
+    radius,
+    sweep,
+    outward: value.outward,
+  };
+}
+
 function stretch(value: unknown): StretchSpec | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value) || !Array.isArray(value.points) || value.points.length < 2) {
@@ -198,6 +218,7 @@ function stretch(value: unknown): StretchSpec | undefined {
     ...(warp(value.warp, 'stretch.warp') ? { warp: warp(value.warp, 'stretch.warp') } : {}),
     ...(value.warpMode ? { warpMode: value.warpMode } : {}),
     ...(edges(value.edges) ? { edges: edges(value.edges) } : {}),
+    ...(value.arc !== undefined ? { arc: arc(value.arc) } : {}),
   };
 }
 

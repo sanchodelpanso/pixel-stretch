@@ -4,6 +4,8 @@ import type { StretchSpec, Point } from '../types/stretch';
 import type { SourceImage } from '../types/image';
 import type { LayerDocument } from '../types/layer';
 import { DEFAULT_STRETCH, chordLength, bandBasis, initialRect, bandCorners } from '../types/stretch';
+import type { ArcBand } from '../types/arc-band';
+import { arcFromPull, arcOutline, arcPoint, arcToStraight, straightToArc } from '../types/arc-band';
 import { useLayers } from '../layers/use-layers';
 import { useSegmentation } from '../segmentation/use-segmentation';
 import { layerImageData, hitTestLayers, docMaskToLayerSpace } from '../layers/layer-utils';
@@ -15,6 +17,7 @@ import { LayerCanvas } from '../editor/LayerCanvas';
 import { SelectionOverlay } from '../editor/SelectionOverlay';
 import { StretchPathEditor } from '../editor/StretchPathEditor';
 import { StretchRectHandles } from '../editor/StretchRectHandles';
+import { StretchArcHandles } from '../editor/StretchArcHandles';
 import { MarchingAnts } from '../editor/MarchingAnts';
 import { BrushTool } from '../editor/BrushTool';
 import { Toolbar } from './Toolbar';
@@ -41,6 +44,9 @@ const TOOL_HINTS: Record<EditorTool, string> = {
 
 /** Shorter than this and the drag was probably a stray click, not a line. */
 const MIN_SAMPLE_LINE = 6;
+
+/** How a band leaves its locked path: pulled out flat, or swept round a pivot. */
+type BandMode = 'straight' | 'arc';
 
 /**
  * The sample path being shaped, before (and while) it drives a band.
@@ -69,6 +75,9 @@ export function EditorScreen({ source }: EditorScreenProps) {
   const [draft, setDraft] = useState<StretchDraft | null>(null);
   /** Live rectangle while the band is being pulled off a locked path. */
   const [extruding, setExtruding] = useState<number | null>(null);
+  const [bandMode, setBandMode] = useState<BandMode>('straight');
+  /** Live sweep while an arc band is being pulled off a locked path. */
+  const [arcPull, setArcPull] = useState<ArcBand | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [view, setView] = useState({ width: 0, height: 0 });
   const [isExporting, setIsExporting] = useState(false);
@@ -79,7 +88,9 @@ export function EditorScreen({ source }: EditorScreenProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; docX: number; docY: number; moved: boolean } | null>(null);
-  const stretchDragRef = useRef<'draw' | 'extrude' | null>(null);
+  const stretchDragRef = useRef<'draw' | 'extrude' | 'sweep' | null>(null);
+  /** Where the sweep was grabbed, relative to the path's midpoint. */
+  const sweepGrabRef = useRef<Point>({ x: 0, y: 0 });
 
   const { segment, encodeImage, addPoint, refineBrush, clear: clearSeg } = seg;
   const {
@@ -218,8 +229,18 @@ export function EditorScreen({ source }: EditorScreenProps) {
         setDraft({ points: [point, { ...point }], locked: false, layerId: null });
       } else if (draft.locked && !draft.layerId) {
         // Path is committed: this drag pulls the band off it.
-        stretchDragRef.current = 'extrude';
-        setExtruding(0);
+        if (bandMode === 'arc') {
+          const a = draft.points[0];
+          const b = draft.points[draft.points.length - 1];
+          // Measured from wherever the drag starts, so grabbing the grip
+          // beside the path doesn't jump the band round.
+          sweepGrabRef.current = { x: point.x - (a.x + b.x) / 2, y: point.y - (a.y + b.y) / 2 };
+          stretchDragRef.current = 'sweep';
+          setArcPull(null);
+        } else {
+          stretchDragRef.current = 'extrude';
+          setExtruding(0);
+        }
       }
       // While a path is open for shaping, bare-canvas drags do nothing —
       // its own handles own the interaction.
@@ -242,7 +263,7 @@ export function EditorScreen({ source }: EditorScreenProps) {
       setSelectionLayerId(selectedLayer.id);
       addPoint({ x: nx, y: ny, label: e.altKey ? 0 : 1 });
     }
-  }, [tool, draft, pendingStretch, doc.layers, selectedLayer, seg.isEncoded, toDocPoint, select, addPoint]);
+  }, [tool, draft, bandMode, pendingStretch, doc.layers, selectedLayer, seg.isEncoded, toDocPoint, select, addPoint]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     const point = toDocPoint(e.clientX, e.clientY);
@@ -250,6 +271,14 @@ export function EditorScreen({ source }: EditorScreenProps) {
 
     if (stretchDragRef.current === 'draw' && draft) {
       setDraft({ ...draft, points: [draft.points[0], point] });
+      return;
+    }
+
+    if (stretchDragRef.current === 'sweep' && draft) {
+      const a = draft.points[0];
+      const b = draft.points[draft.points.length - 1];
+      const pointer = { x: point.x - sweepGrabRef.current.x, y: point.y - sweepGrabRef.current.y };
+      setArcPull((previous) => arcFromPull(a, b, chordLength(draft.points), pointer, previous));
       return;
     }
 
@@ -285,18 +314,25 @@ export function EditorScreen({ source }: EditorScreenProps) {
       return;
     }
 
-    // 'extrude': turn the locked path into an actual band layer.
+    // 'extrude' or 'sweep': turn the locked path into an actual band layer.
     const length = Math.round(extruding ?? 0);
+    const pull = arcPull;
     setExtruding(null);
-    if (!selectedLayer || Math.abs(length) < 1) return;
+    setArcPull(null);
+    if (!selectedLayer) return;
+    if (gesture === 'sweep' ? !pull || Math.abs(pull.sweep) * pull.radius < 1 : Math.abs(length) < 1) return;
 
-    const spec: StretchSpec = {
+    const straight: StretchSpec = {
       ...DEFAULT_STRETCH,
       ...initialRect(draft.points),
       points: draft.points,
       sourceLayerId: selectedLayer.id,
       length,
     };
+    // An arc band still carries the straight rectangle it would uncurl into.
+    const spec: StretchSpec = gesture === 'sweep' && pull
+      ? { ...straight, ...arcToStraight(straight, pull), arc: pull }
+      : straight;
 
     const name = `${selectedLayer.name} stretch`;
     const existingSubject = doc.layers.some((layer) => layer.protectionSourceId === selectedLayer.id);
@@ -312,7 +348,7 @@ export function EditorScreen({ source }: EditorScreenProps) {
       setNotice('Detecting the main subject…');
       segment(layerImageData(selectedLayer));
     }
-  }, [draft, extruding, selectedLayer, doc.layers, addProtectedStretch, segment]);
+  }, [draft, extruding, arcPull, selectedLayer, doc.layers, addProtectedStretch, segment]);
 
   /** Shaping the path re-renders an existing band live. */
   const handlePathChange = useCallback((points: Point[]) => {
@@ -333,6 +369,7 @@ export function EditorScreen({ source }: EditorScreenProps) {
     if (!selectedLayer?.stretch) return;
     beginHistory();
     setTool('stretch');
+    setBandMode(selectedLayer.stretch.arc ? 'arc' : 'straight');
     setDraft({ points: selectedLayer.stretch.points, locked: false, layerId: selectedLayer.id });
   }, [selectedLayer, beginHistory]);
 
@@ -345,6 +382,21 @@ export function EditorScreen({ source }: EditorScreenProps) {
   }, [selectedLayer, refineBrush]);
 
   // --- Stretch editing -----------------------------------------------------
+
+  const stretchSpec = selectedLayer?.stretch ?? null;
+  /** A selected band shows its own mode; a path in progress shows the next pull's. */
+  const shownBandMode: BandMode = !draft && stretchSpec ? (stretchSpec.arc ? 'arc' : 'straight') : bandMode;
+
+  const handleBandModeChange = useCallback((next: BandMode) => {
+    setBandMode(next);
+    if (draft || !stretchSpec || !selectedId) return;
+    // Switching a finished band curls or uncurls it in place.
+    if (next === 'arc' && !stretchSpec.arc) {
+      updateStretch(selectedId, { arc: straightToArc(stretchSpec) });
+    } else if (next === 'straight' && stretchSpec.arc) {
+      updateStretch(selectedId, arcToStraight(stretchSpec, stretchSpec.arc));
+    }
+  }, [draft, stretchSpec, selectedId, updateStretch]);
 
   const handleStretchChange = useCallback(
     (patch: Partial<StretchSpec>, transient: boolean) => {
@@ -416,6 +468,7 @@ export function EditorScreen({ source }: EditorScreenProps) {
         setPendingStretch(null);
         setDraft(null);
         setExtruding(null);
+        setArcPull(null);
         setNotice(null);
         setTool('move');
         return;
@@ -451,7 +504,6 @@ export function EditorScreen({ source }: EditorScreenProps) {
     };
   }, [selection, selectedLayer, doc.width, doc.height]);
 
-  const stretchSpec = selectedLayer?.stretch ?? null;
   // The transform box belongs to the stretch tool; it would fight the move tool.
   const showRectHandles = stretchSpec && tool === 'stretch' && !draft;
 
@@ -470,6 +522,11 @@ export function EditorScreen({ source }: EditorScreenProps) {
     const a = draft.points[0];
     const b = draft.points[draft.points.length - 1];
     const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    if (bandMode === 'arc' && arcPull) {
+      // Ride the far end of the sweep.
+      const end = arcPoint(arcPull, 0, 1);
+      return { x: end.x * (view.width / doc.width), y: end.y * (view.width / doc.width) };
+    }
     const pulled = extruding ?? 0;
     // Stand off far enough to stay clear of the path itself.
     const standoff = (pulled < 0 ? -34 : 34) / (view.width / doc.width);
@@ -478,7 +535,7 @@ export function EditorScreen({ source }: EditorScreenProps) {
       x: (mid.x + out.x * offset) * (view.width / doc.width),
       y: (mid.y + out.y * offset) * (view.width / doc.width),
     };
-  }, [draft, extruding, view.width, doc.width]);
+  }, [draft, extruding, bandMode, arcPull, view.width, doc.width]);
 
   /** Outline of the band as it's being pulled off a locked path. */
   const previewCorners = useMemo(() => {
@@ -491,16 +548,25 @@ export function EditorScreen({ source }: EditorScreenProps) {
       length: extruding,
     });
   }, [draft, extruding]);
+  const previewArc = useMemo(() => {
+    if (!draft?.locked || !arcPull) return null;
+    return arcOutline(arcPull, chordLength(draft.points));
+  }, [draft, arcPull]);
+
   const stretchSource = stretchSpec
     ? doc.layers.find((l) => l.id === stretchSpec.sourceLayerId) ?? null
     : null;
 
   const stretchHint = draft
     ? draft.locked
-      ? 'Drag away from the path to pull the band out'
+      ? bandMode === 'arc'
+        ? 'Drag away from the path and curve round to sweep the band · come back to the start to close a ring'
+        : 'Drag away from the path to pull the band out'
       : 'Drag the hollow midpoints to bend the path · double-click a point to remove it · 🔒 to lock'
     : stretchSpec
-      ? stretchSpec.warpMode === 'curved'
+      ? stretchSpec.arc
+        ? 'Centre handle sets the radius · square handle the width · round handle the sweep'
+        : stretchSpec.warpMode === 'curved'
         ? 'Round handles make a 2D wave · corner handles keep the fold effect'
         : 'Drag a corner to skew the rectangle in 2D · use the curve button for waves'
       : TOOL_HINTS.stretch;
@@ -553,6 +619,7 @@ export function EditorScreen({ source }: EditorScreenProps) {
           onToolChange={(next) => {
             setIsPanelOpen(false);
             setPendingStretch(null);
+            setArcPull(null);
             if (next !== tool) clearSeg();
             // An unfinished path doesn't survive leaving the tool.
             if (next !== 'stretch') setDraft(null);
@@ -582,6 +649,27 @@ export function EditorScreen({ source }: EditorScreenProps) {
             >
               <LayerCanvas doc={doc} viewWidth={view.width} viewHeight={view.height} />
 
+              {tool === 'stretch' && selectedLayer && (
+                <div
+                  className="stretch-band-mode"
+                  role="group"
+                  aria-label="Band shape"
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  {(['straight', 'arc'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      className={shownBandMode === mode ? 'active' : ''}
+                      aria-pressed={shownBandMode === mode}
+                      onClick={() => handleBandModeChange(mode)}
+                    >
+                      {mode === 'arc' ? 'Arc' : 'Straight'}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {selection && selectedLayer && (
                 <SelectionOverlay
                   mask={selection.mask}
@@ -600,7 +688,20 @@ export function EditorScreen({ source }: EditorScreenProps) {
 
               {antsBbox && <MarchingAnts bbox={antsBbox} width={view.width} height={view.height} />}
 
-              {showRectHandles && stretchSpec && (
+              {showRectHandles && stretchSpec?.arc && (
+                <StretchArcHandles
+                  spec={stretchSpec}
+                  arc={stretchSpec.arc}
+                  docWidth={doc.width}
+                  viewWidth={view.width}
+                  viewHeight={view.height}
+                  onChange={handleStretchChange}
+                  onBeginDrag={beginHistory}
+                  onUnlock={handleEditPath}
+                />
+              )}
+
+              {showRectHandles && stretchSpec && !stretchSpec.arc && (
                 <StretchRectHandles
                   spec={stretchSpec}
                   docWidth={doc.width}
@@ -625,6 +726,15 @@ export function EditorScreen({ source }: EditorScreenProps) {
 
               {draft?.locked && (
                 <svg className="stretch-preview" width={view.width} height={view.height}>
+                  {previewArc && (
+                    <path
+                      className="preview-rect"
+                      fillRule="evenodd"
+                      d={previewArc.map((loop) => (
+                        loop.map((p, i) => `${i ? 'L' : 'M'} ${p.x * scale},${p.y * scale}`).join(' ') + ' Z'
+                      )).join(' ')}
+                    />
+                  )}
                   {previewCorners && (
                     <polygon
                       className="preview-rect"

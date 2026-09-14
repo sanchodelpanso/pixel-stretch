@@ -286,6 +286,59 @@ test('straight corners skew in 2D and curved controls start as a flat wave surfa
   await expect(page.getByText(/round handles make a flat wave/i)).toBeVisible();
 });
 
+test('arc mode sweeps a locked line round into a ring with radius and width handles', async ({ page }) => {
+  const project = JSON.parse(await readFile(path.resolve('PixelStretch.pixelstretch'), 'utf8'));
+  // An existing subject layer lets the stretch commit without the subject model.
+  project.layers[1].protectionSourceId = project.layers[0].id;
+  project.selectedLayerId = project.layers[0].id;
+  await page.goto('/');
+  await page.locator('input[accept*=".pixelstretch"]').setInputFiles({
+    name: 'arc-test.pixelstretch',
+    mimeType: 'application/vnd.pixelstretch.project+json',
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  await page.getByRole('button', { name: 'Stretch', exact: true }).click();
+
+  const bounds = (await page.locator('.editor-canvas-wrapper').boundingBox())!;
+  const mx = bounds.x + bounds.width * 0.5;
+  await page.mouse.move(mx, bounds.y + bounds.height * 0.33);
+  await page.mouse.down();
+  await page.mouse.move(mx, bounds.y + bounds.height * 0.52, { steps: 8 });
+  await page.mouse.up();
+  await page.locator('.path-lock').dispatchEvent('pointerdown', { pointerId: 1 });
+  await page.getByRole('group', { name: 'Band shape' }).getByRole('button', { name: 'Arc' }).click();
+
+  // Pull right from the middle of the line and keep curling round to the start.
+  const my = bounds.y + bounds.height * 0.425;
+  const radius = bounds.width * 0.2;
+  await page.mouse.move(mx, my);
+  await page.mouse.down();
+  for (let i = 1; i <= 80; i++) {
+    const theta = Math.PI / 2 - Math.PI * 2 * 0.99 * (i / 80);
+    await page.mouse.move(mx + Math.cos(theta) * radius, my - radius + Math.sin(theta) * radius);
+  }
+  await expect(page.locator('.stretch-preview .preview-rect')).toBeVisible();
+  await page.mouse.up();
+
+  const badge = page.locator('.stretch-arc-handles .rect-badge');
+  await expect(badge).toContainText('Ring 360°');
+  await expect(page.locator('.arc-radius-handle')).toHaveCount(1);
+  await expect(page.locator('.arc-width-handle')).toHaveCount(1);
+
+  const width = (await page.locator('.arc-width-handle').boundingBox())!;
+  await page.mouse.move(width.x + width.width / 2, width.y + width.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(width.x + width.width / 2, width.y + width.height / 2 + 30, { steps: 6 });
+  await page.mouse.up();
+  expect(Number(await page.getByLabel('Width').inputValue())).toBeLessThan(200);
+
+  await page.getByRole('button', { name: 'Open ring' }).click();
+  await expect(badge).toContainText('180°');
+  await page.getByRole('group', { name: 'Band shape' }).getByRole('button', { name: 'Straight' }).click();
+  await expect(page.locator('.stretch-arc-handles')).toHaveCount(0);
+  await expect(page.locator('.stretch-rect-handles')).toBeVisible();
+});
+
 test('mobile editor uses a touch toolbar and layers sheet without horizontal overflow', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openPhoto(page);
