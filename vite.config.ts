@@ -1,7 +1,9 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  // GitHub Pages serves the site from /pixel-stretch/; dev and Playwright stay at /
+  base: command === 'build' ? '/pixel-stretch/' : '/',
   plugins: [react()],
   worker: {
     format: 'iife',
@@ -11,4 +13,4 @@ export default defineConfig({
   },
   // Allow importing .glsl files as raw strings
   assetsInclude: ['**/*.glsl'],
-})
+}))
