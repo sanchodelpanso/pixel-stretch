@@ -297,7 +297,7 @@ export function edgeInsertionPoints(arc: ArcBand, edge: ArcEdge): number[] {
 }
 
 /** Sample both edges into lookup tables, indexed by `t` in [0, 1]. */
-function edgeTables(arc: ArcBand, width: number): { inner: Float64Array; outer: Float64Array } {
+export function edgeTables(arc: ArcBand, width: number): { inner: Float64Array; outer: Float64Array } {
   const inner = new Float64Array(PROFILE_SAMPLES + 1);
   const outer = new Float64Array(PROFILE_SAMPLES + 1);
   for (let i = 0; i <= PROFILE_SAMPLES; i++) {

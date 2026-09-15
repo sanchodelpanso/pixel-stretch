@@ -161,6 +161,8 @@ export function drawPixelStreaks(
   columns: number,
   height: number,
   options: PixelStreakOptions,
+  /** Feathers on the GPU when it can, returning the softened canvas; null falls back to the CPU blur. */
+  softenOnGpu?: (source: HTMLCanvasElement, radius: number) => HTMLCanvasElement | null,
 ): void {
   for (const cell of pixelStreakCells(row, columns, height, options)) {
     ctx.fillStyle = `rgba(${Math.round(cell.r)},${Math.round(cell.g)},${Math.round(cell.b)},${cell.a})`;
@@ -170,6 +172,14 @@ export function drawPixelStreaks(
   const softness = Math.max(0, Math.min(1, options.softness ?? 0));
   const radius = Math.round(softness * Math.max(MIN_PIXEL_SIZE, options.blockSize) * 0.5);
   if (radius < 1) return;
+  const softened = softenOnGpu?.(ctx.canvas, radius);
+  if (softened) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'copy';
+    ctx.drawImage(softened, 0, 0);
+    ctx.restore();
+    return;
+  }
   const image = ctx.getImageData(0, 0, columns, height);
   softenPixels(image.data, columns, height, radius);
   ctx.putImageData(image, 0, 0);

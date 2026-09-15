@@ -73,6 +73,7 @@ export function StretchTools({ spec, bandMode, control, hasSubject, overSubject,
 
   return (
     <div ref={root} className="stretch-tools" role="group" aria-label="Stretch tools">
+      <div className="stretch-tool-buttons">
       <button className={`stretch-tool ${menu === 'shape' ? 'selected' : ''}`} data-menu="shape"
         aria-label="Band shape" aria-expanded={menu === 'shape'} aria-controls="stretch-shapes"
         onClick={() => setMenu(menu === 'shape' ? null : 'shape')}>
@@ -87,7 +88,7 @@ export function StretchTools({ spec, bandMode, control, hasSubject, overSubject,
       </button>
       <span className="stretch-tools-divider" />
       {bandMode === 'straight' && (
-        <button className={`stretch-tool ${spec.warpMode === 'curved' && control === 'transform' ? 'selected' : ''}`}
+        <button className={`stretch-tool desktop-curve ${spec.warpMode === 'curved' && control === 'transform' ? 'selected' : ''}`}
           aria-label="Curve" aria-pressed={spec.warpMode === 'curved'} title="Shape the edges with curve handles"
           onClick={() => {
             onControlChange('transform');
@@ -113,6 +114,7 @@ export function StretchTools({ spec, bandMode, control, hasSubject, overSubject,
         <Icon name="more" size={22} /><span>More</span>
       </button>
 
+      </div>
       {menu === 'shape' && (
         <div id="stretch-shapes" className="stretch-tools-menu shape-menu" role="group" aria-label="Band shape">
           {(['straight', 'arc'] as const).map((shape) => (
@@ -121,6 +123,17 @@ export function StretchTools({ spec, bandMode, control, hasSubject, overSubject,
               {bandMode === shape && <Icon name="check" size={18} />}
             </button>
           ))}
+          {bandMode === 'straight' && (
+            <button className="mobile-curve" aria-label="Curve" aria-pressed={spec.warpMode === 'curved'}
+              onClick={() => {
+                onControlChange('transform');
+                onChange({ warpMode: spec.warpMode === 'curved' ? 'straight' : 'curved', bend: 0 }, false);
+                setMenu(null);
+              }}>
+              <Icon name="curve" size={21} /><span>Curved edges</span>
+              {spec.warpMode === 'curved' && <Icon name="check" size={18} />}
+            </button>
+          )}
         </div>
       )}
       {menu === 'style' && (

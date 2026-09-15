@@ -1,22 +1,20 @@
 .stretch-tools {
-  position: absolute;
-  top: 6px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 12;
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 2px;
-  max-width: calc(100% - 20px);
-  padding: 4px 6px;
-  border: 1px solid #e4e2ec;
-  border-radius: 18px;
-  background: #fff;
-  color: #202124;
-  box-shadow: 0 3px 12px #0002, 0 1px 3px #0001;
+  min-width: 0;
+  color: inherit;
 }
+.stretch-tool-buttons {
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+.stretch-tool-buttons::-webkit-scrollbar { display: none; }
 
-.stretch-tools button {
+.editor-dock button {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -31,13 +29,13 @@
   touch-action: manipulation;
 }
 
-.stretch-tools button:hover:not(:disabled) { background: #f3f2f6; }
-.stretch-tools button.selected,
-.stretch-tools button.selected:hover { background: #efe5ff; color: #7731d8; }
-.stretch-tools button:focus-visible { outline-color: #8b3dff; }
-.stretch-tools button:disabled { opacity: .35; cursor: not-allowed; }
+.editor-dock button:hover:not(:disabled) { background: #f3f2f6; }
+.editor-dock button.selected,
+.editor-dock button.selected:hover { background: #efe5ff; color: #7731d8; }
+.editor-dock button:focus-visible { outline: 2px solid #8b3dff; outline-offset: -2px; }
+.editor-dock button:disabled { opacity: .35; cursor: not-allowed; }
 
-.stretch-tools .stretch-tool {
+.editor-dock .stretch-tool {
   flex: 0 1 auto;
   min-width: 50px;
   flex-direction: column;
@@ -47,12 +45,12 @@
 
 .stretch-tool > span { display: flex; align-items: center; gap: 3px; font-size: 11px; white-space: nowrap; }
 .stretch-tools-divider { width: 1px; height: 28px; margin: 0 2px; flex: 0 0 1px; background: #e8e6ed; }
-.stretch-shapes { border-radius: 999px; padding: 3px; }
+.stretch-shapes { padding: 3px; }
 .stretch-shapes button { padding: 8px 16px; border-radius: 999px; }
 
 .stretch-tools-menu {
   position: absolute;
-  top: calc(100% + 8px);
+  bottom: calc(100% + 12px);
   width: 220px;
   max-width: calc(100vw - 32px);
   padding: 6px;
@@ -102,9 +100,16 @@
 .stretch-tools-menu .stretch-menu-color .stretch-menu-swatch-none { width: auto; min-height: 36px; padding: 6px 10px; border-radius: 8px; border: 1px solid #e4e2ec; font-size: 12px; }
 .stretch-menu-color input[type='color'] { width: 44px; height: 36px; padding: 2px; border: 1px solid #e4e2ec; border-radius: 8px; background: #fff; }
 .stretch-menu-divider { display: block; height: 1px; margin: 5px; background: #e8e6ed; }
+.editor-dock .mobile-curve { display: none; }
 
-@media (max-width: 360px) {
-  .stretch-tools { gap: 0; padding-inline: 4px; }
-  .stretch-tools .stretch-tool { min-width: 46px; padding-inline: 6px; }
-  .stretch-tools-divider { margin-inline: 1px; }
+@media (max-width: 760px) {
+  .editor-dock .desktop-curve { display: none; }
+  .editor-dock .mobile-curve { display: flex; }
+  .editor-dock .stretch-tool { flex: 0 0 auto; min-width: 44px; padding-inline: 5px; }
+  .stretch-tools-divider { display: none; }
+  .stretch-tool > span { font-size: 10px; }
+  .stretch-tools-menu { position: absolute; max-height: min(65dvh, 520px); }
+  .stretch-tools { position: static; }
+  .shape-menu { left: 0; }
+  .more-menu { right: 0; }
 }

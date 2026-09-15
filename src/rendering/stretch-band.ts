@@ -2,13 +2,17 @@ import type { Layer } from '../types/layer';
 import type { StretchSpec, Point } from '../types/stretch';
 import { rectBasis, bandCorners, warpedCorners, isWarped, hasCurvedEdges, isConvexShape } from '../types/stretch';
 import type { ArcBand } from '../types/arc-band';
-import { arcBounds, arcLookup } from '../types/arc-band';
+import { arcBounds, arcLookup, edgeTables } from '../types/arc-band';
 import { bendPoint } from './projection';
 import { bandSurface } from './surface';
 import type { SurfaceMap } from './surface';
 import { samplePath } from './sample-path';
 import { clamp } from '../utils/math-utils';
 import { simplifyRow } from './color-simplify';
+import { fits, getGL, textureFromBytes, textureFromCanvas } from './gl/gl-context';
+import { placeRowOnMesh, placeTextureOnMesh } from './gl/mesh-place';
+import { renderArcOnGL } from './gl/arc-render';
+import { softenOnGL } from './gl/blur';
 import {
   DEFAULT_GRID_SIZE, gridEffect, gridLineWidth, parseHexColor, splitColorAndAlpha, type GridOptions,
 } from './grid-texture';
@@ -76,6 +80,12 @@ function pixelOptions(spec: StretchSpec) {
     startScatter: spec.pixelStartScatter ?? DEFAULT_PIXEL_START_SCATTER,
     softness: spec.pixelSoftness ?? DEFAULT_PIXEL_SOFTNESS,
   };
+}
+
+/** Feather pixel blocks on the GPU when there is one; null lets the CPU blur run instead. */
+function gpuSoften(source: HTMLCanvasElement, radius: number): HTMLCanvasElement | null {
+  const gpu = getGL();
+  return gpu ? softenOnGL(gpu, source, radius) : null;
 }
 
 /** The motion style's options for a band, with defaults filled in. */
@@ -207,9 +217,33 @@ function renderArcBand(spec: StretchSpec, arc: ArcBand, source: Layer, subject: 
     } else {
       const unrolled = createCanvas(columns, length);
       const uctx = unrolled.getContext('2d', { willReadFrequently: true })!;
-      drawPixelStreaks(uctx, row, columns, length, pixelOptions(spec));
+      drawPixelStreaks(uctx, row, columns, length, pixelOptions(spec), gpuSoften);
       streaks = { data: uctx.getImageData(0, 0, columns, length).data, length };
     }
+  }
+
+  const gpu = getGL();
+  if (gpu && fits(gpu, outW, outH) && fits(gpu, columns, streaks?.length ?? 1)) {
+    const texture = streaks
+      ? textureFromBytes(gpu, streaks.data, columns, streaks.length, 'nearest')
+      : textureFromBytes(gpu, row, columns, 1, 'linear');
+    const tables = edgeTables(arc, width);
+    const canvas = renderArcOnGL(gpu, {
+      arc,
+      width,
+      columns,
+      texture,
+      textureLength: streaks?.length ?? 1,
+      mode: streaks ? 'streaks' : 'row',
+      inner: tables.inner,
+      outer: tables.outer,
+      fade: spec.fade,
+      soft,
+      grid: gridOptions(spec),
+      bounds: { minX, minY, width: outW, height: outH },
+    });
+    gpu.gl.deleteTexture(texture);
+    return { canvas, x: minX, y: minY };
   }
 
   const output = createCanvas(outW, outH);
@@ -307,7 +341,7 @@ function shapeAlpha(canvas: HTMLCanvasElement, spec: StretchSpec): void {
 const PATCH_CELLS = 72;
 
 /** A distorted band diced into cells: `points[row][column]` in document space. */
-interface PatchMesh {
+export interface PatchMesh {
   cols: number;
   rows: number;
   points: Point[][];
@@ -315,7 +349,7 @@ interface PatchMesh {
   lift: number[][];
 }
 
-function patchMesh(spec: StretchSpec, at: SurfaceMap, width: number, height: number): PatchMesh {
+export function patchMesh(spec: StretchSpec, at: SurfaceMap, width: number, height: number): PatchMesh {
   const cols = Math.max(1, Math.min(PATCH_CELLS, width));
   const rows = Math.max(1, Math.min(PATCH_CELLS, height));
   const { along, out } = rectBasis(spec);
@@ -424,14 +458,19 @@ export function renderStretchBand(spec: StretchSpec, source: Layer, subject: Lay
   const height = Math.round(Math.abs(spec.length));
   if (spec.points.length < 2 || width < MIN_SIZE || height < MIN_SIZE) return null;
 
+  const pixel = spec.style === 'pixel';
+  if (!pixel && spec.style !== 'motion') {
+    const onGpu = smoothBandOnGpu(spec, samplePathRow(source, spec.points, width, mask, spec), width, height);
+    if (onGpu !== undefined) return onGpu;
+  }
+
   const local = createCanvas(width, height);
   const lctx = local.getContext('2d')!;
-  const pixel = spec.style === 'pixel';
   /** Whether every sample on the path is fully opaque; pixel and motion streaks have gaps regardless. */
   let solidRow = false;
   if (pixel) {
     // Pixel blocks already quantise the colours, so they read the raw samples.
-    drawPixelStreaks(lctx, samplePathRow(source, spec.points, width, mask), width, height, pixelOptions(spec));
+    drawPixelStreaks(lctx, samplePathRow(source, spec.points, width, mask), width, height, pixelOptions(spec), gpuSoften);
   } else if (spec.style === 'motion') {
     const pixels = motionStreakPixels(samplePathRow(source, spec.points, width, mask), width, height, motionOptions(spec));
     const image = lctx.createImageData(width, height);
@@ -439,6 +478,7 @@ export function renderStretchBand(spec: StretchSpec, source: Layer, subject: Lay
     lctx.putImageData(image, 0, 0);
   } else {
     const row = samplePathRow(source, spec.points, width, mask, spec);
+    solidRow = true;
     for (let i = 3; i < row.length; i += 4) if (row[i] < 255) solidRow = false;
     // Every output row is the same row of colours; no resampling wanted.
     lctx.imageSmoothingEnabled = false;
@@ -450,6 +490,36 @@ export function renderStretchBand(spec: StretchSpec, source: Layer, subject: Lay
   const translucent = !solidRow || spec.fade > 0 || spec.edgeSoftness > 0 || (spec.gridTexture ?? 0) > 0;
   // Keep crisp pixel blocks crisp; smooth streaks and feathered blocks want high-quality filtering.
   return placeBandLocal(spec, local, pixel && !spec.pixelSoftness, translucent);
+}
+
+/**
+ * A smooth straight band drawn by the GPU straight from its sampled row, or
+ * undefined when there's no GPU (or the band is too big for it) so the canvas
+ * path runs. Null means the shape is degenerate.
+ */
+function smoothBandOnGpu(
+  spec: StretchSpec,
+  row: Uint8ClampedArray,
+  width: number,
+  height: number,
+): BandRender | null | undefined {
+  const gpu = getGL();
+  if (!gpu) return undefined;
+  const placement = bandPlacement(spec, width, height);
+  if (!placement) return null;
+  if (!fits(gpu, placement.bounds.width, placement.bounds.height) || !fits(gpu, width, 1)) return undefined;
+  // A plain rectangle is a single cell.
+  const mesh = placement.mesh ?? patchMesh(spec, bandSurface(spec), 1, 1);
+  const canvas = placeRowOnMesh(gpu, {
+    row,
+    columns: width,
+    localWidth: width,
+    localHeight: height,
+    fade: spec.fade,
+    soft: clamp(spec.edgeSoftness, 0, 0.49),
+    grid: gridOptions(spec),
+  }, mesh, placement.bounds, hasCurvedEdges(spec));
+  return { canvas, x: placement.bounds.minX, y: placement.bounds.minY };
 }
 
 /** A 1px-tall canvas holding a sampled row of colours. */
@@ -595,40 +665,23 @@ export function placeBandLocal(
   crisp = false,
   translucent = true,
 ): BandRender | null {
-  const width = local.width;
-  const height = local.height;
-  const { along, out } = rectBasis(spec);
-  const flipped = spec.length < 0;
-  // Local +y always points the way the band actually extrudes.
-  const outSigned = { x: out.x * (flipped ? -1 : 1), y: out.y * (flipped ? -1 : 1) };
+  const placement = bandPlacement(spec, local.width, local.height);
+  if (!placement) return null;
+  const { mesh, bounds } = placement;
+  const { minX, minY } = bounds;
 
-  // Local (0,0) is the anchor on the path for either sign of `length` — the
-  // side is carried entirely by `outSigned`, so the origin never moves.
-  const origin: Point = spec.anchor;
-  const curved = hasCurvedEdges(spec);
-  const distorted = curved || isWarped(spec) || spec.bend !== 0 || spec.removedEdge !== undefined;
+  if (mesh) {
+    // The GPU draws the whole mesh in one call, seamlessly; the canvas path needs thousands.
+    const gpu = getGL();
+    if (gpu && fits(gpu, bounds.width, bounds.height) && fits(gpu, local.width, local.height)) {
+      const texture = textureFromCanvas(gpu, local, crisp ? 'nearest' : 'linear');
+      const canvas = placeTextureOnMesh(gpu, texture, mesh, bounds, crisp, hasCurvedEdges(spec));
+      gpu.gl.deleteTexture(texture);
+      return { canvas, x: minX, y: minY };
+    }
+  }
 
-  // The corner order already matches local (0,0)→(w,0)→(w,h)→(0,h): local
-  // (0,height) lands on corner 3 for either sign of `length`, because
-  // `outSigned` and `|length|` flip together.
-  const quad = warpedCorners(spec);
-  // A non-convex quad throws the homography's points out towards infinity —
-  // an unbounded canvas. Keep the last good pixels instead (e.g. a width
-  // slider shrinking a skewed band past its own corners).
-  if (!curved && distorted && !isConvexShape(spec)) return null;
-  const at = bandSurface(spec);
-  // A folded sheet or a bend can reach past the quad's own corners, so bound
-  // it by every vertex.
-  const mesh = distorted ? patchMesh(spec, at, width, height) : null;
-
-  const bounds = mesh ? mesh.points.flat() : quad;
-  const minX = Math.floor(Math.min(...bounds.map((c) => c.x)) + PIXEL_EPSILON);
-  const minY = Math.floor(Math.min(...bounds.map((c) => c.y)) + PIXEL_EPSILON);
-  const maxX = Math.ceil(Math.max(...bounds.map((c) => c.x)) - PIXEL_EPSILON);
-  const maxY = Math.ceil(Math.max(...bounds.map((c) => c.y)) - PIXEL_EPSILON);
-  if (maxX - minX < MIN_SIZE || maxY - minY < MIN_SIZE) return null;
-
-  const output = createCanvas(maxX - minX, maxY - minY);
+  const output = createCanvas(bounds.width, bounds.height);
   const octx = output.getContext('2d')!;
   if (crisp) octx.imageSmoothingEnabled = false;
   else octx.imageSmoothingQuality = 'high';
@@ -638,17 +691,56 @@ export function placeBandLocal(
   } else if (mesh) {
     drawPatch(octx, local, mesh, -minX, -minY);
   } else {
-    // Undistorted: one blit, columns of the matrix are the local axes.
+    const { along, out } = rectBasis(spec);
+    const flipped = spec.length < 0;
+    // Local +y always points the way the band actually extrudes.
+    const outSigned = { x: out.x * (flipped ? -1 : 1), y: out.y * (flipped ? -1 : 1) };
+    // Undistorted: one blit, columns of the matrix are the local axes. Local
+    // (0,0) is the anchor on the path for either sign of `length`.
     octx.setTransform(
       along.x, along.y,
       outSigned.x, outSigned.y,
-      origin.x - minX, origin.y - minY,
+      spec.anchor.x - minX, spec.anchor.y - minY,
     );
     octx.drawImage(local, 0, 0);
     octx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
   return { canvas: output, x: minX, y: minY };
+}
+
+/**
+ * Where a straight band's `width × height` local bitmap lands: its pixel
+ * bounds in the document, and the cell mesh it is drawn across once skewed,
+ * bent or curved (null for a plain rectangle, which is one affine blit).
+ * Null when the shape is degenerate.
+ */
+export function bandPlacement(
+  spec: StretchSpec,
+  width: number,
+  height: number,
+): { mesh: PatchMesh | null; bounds: { minX: number; minY: number; width: number; height: number } } | null {
+  const curved = hasCurvedEdges(spec);
+  const distorted = curved || isWarped(spec) || spec.bend !== 0 || spec.removedEdge !== undefined;
+
+  // The corner order already matches local (0,0)→(w,0)→(w,h)→(0,h): local
+  // (0,height) lands on corner 3 for either sign of `length`.
+  const quad = warpedCorners(spec);
+  // A non-convex quad throws the homography's points out towards infinity —
+  // an unbounded canvas. Keep the last good pixels instead (e.g. a width
+  // slider shrinking a skewed band past its own corners).
+  if (!curved && distorted && !isConvexShape(spec)) return null;
+  // A folded sheet or a bend can reach past the quad's own corners, so bound
+  // it by every vertex.
+  const mesh = distorted ? patchMesh(spec, bandSurface(spec), width, height) : null;
+
+  const points = mesh ? mesh.points.flat() : quad;
+  const minX = Math.floor(Math.min(...points.map((c) => c.x)) + PIXEL_EPSILON);
+  const minY = Math.floor(Math.min(...points.map((c) => c.y)) + PIXEL_EPSILON);
+  const maxX = Math.ceil(Math.max(...points.map((c) => c.x)) - PIXEL_EPSILON);
+  const maxY = Math.ceil(Math.max(...points.map((c) => c.y)) - PIXEL_EPSILON);
+  if (maxX - minX < MIN_SIZE || maxY - minY < MIN_SIZE) return null;
+  return { mesh, bounds: { minX, minY, width: maxX - minX, height: maxY - minY } };
 }
 
 export { bandCorners };

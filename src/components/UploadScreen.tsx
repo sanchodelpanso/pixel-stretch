@@ -7,6 +7,8 @@ interface UploadScreenProps {
   onImageSelected: (file: File) => void;
   onProjectSelected: (file: File) => void;
   recents: RecentEntry[];
+  showDemo: boolean;
+  onOpenDemo: () => void;
   onOpenRecent: (entry: RecentEntry) => void;
   onRemoveRecent: (entry: RecentEntry) => void;
   isLoading: boolean;
@@ -79,7 +81,7 @@ function RecentSection({ title, entries, onOpen, onRemove }: RecentSectionProps)
 }
 
 export function UploadScreen({
-  onImageSelected, onProjectSelected, recents, onOpenRecent, onRemoveRecent, isLoading, loadingStatus, loadProgress, error,
+  onImageSelected, onProjectSelected, recents, showDemo, onOpenDemo, onOpenRecent, onRemoveRecent, isLoading, loadingStatus, loadProgress, error,
 }: UploadScreenProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -189,6 +191,17 @@ export function UploadScreen({
 
         {!isLoading && (
           <>
+            {showDemo && (
+              <button className="demo-card" onClick={onOpenDemo} aria-label="Open skate demo">
+                <img src={`${import.meta.env.BASE_URL}skate_sample.webp`} alt="" width={96} height={120} />
+                <span className="demo-card-copy">
+                  <span className="demo-card-eyebrow">Try a demo</span>
+                  <strong>Skate stretch</strong>
+                  <span>Explore a ready-to-edit project.</span>
+                  <span className="demo-card-action">Open demo <span aria-hidden="true">→</span></span>
+                </span>
+              </button>
+            )}
             <RecentSection
               title="Recent projects"
               entries={recents.filter((entry) => entry.kind === 'project')}

@@ -18,12 +18,14 @@ interface Session {
 function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [recents, setRecents] = useState<RecentEntry[]>([]);
+  const [recentsReady, setRecentsReady] = useState(false);
   const [isLoadingImage, setIsLoadingImage] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState('Opening image…');
   const [openError, setOpenError] = useState<string | null>(null);
 
   const refreshRecents = useCallback(() => {
-    listRecents().then(setRecents, (err) => console.warn('Could not read recents:', err));
+    listRecents().then(setRecents, (err) => console.warn('Could not read recents:', err))
+      .finally(() => setRecentsReady(true));
   }, []);
 
   // Re-read whenever the start screen comes back, so a save made in the editor shows up.
@@ -55,6 +57,13 @@ function App() {
   const handleProjectSelected = useCallback((file: File) => openWith('Opening project…', async () => {
     const project = await decodeProject(file);
     return { source: { kind: 'project', ...project }, name: projectNameFromFile(file), recentProjectId: null };
+  }), [openWith]);
+
+  const handleOpenDemo = useCallback(() => openWith('Opening skate demo…', async () => {
+    const response = await fetch(`${import.meta.env.BASE_URL}skate_sample.pixelstretch`);
+    if (!response.ok) throw new Error('Could not load the skate demo. Please try again.');
+    const project = await decodeProject(await response.blob());
+    return { source: { kind: 'project', ...project }, name: 'Skate demo', recentProjectId: null };
   }), [openWith]);
 
   const handleOpenRecent = useCallback((entry: RecentEntry) => {
@@ -92,6 +101,8 @@ function App() {
           onImageSelected={(file) => openImageFile(file)}
           onProjectSelected={handleProjectSelected}
           recents={recents}
+          showDemo={recentsReady && recents.length === 0}
+          onOpenDemo={handleOpenDemo}
           onOpenRecent={handleOpenRecent}
           onRemoveRecent={handleRemoveRecent}
           isLoading={isLoadingImage}

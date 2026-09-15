@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Layer, LayerDocument } from '../types/layer';
 import type { ExtractMode } from '../types/editor';
 import type { StretchSpec } from '../types/stretch';
@@ -12,7 +12,21 @@ import {
   createStretchLayer,
   rerenderStretchLayer,
   protectedSubject,
+  makeThumbnail,
 } from './layer-utils';
+
+/** How long a band must stay unchanged before its panel thumbnail is redrawn. */
+const THUMBNAIL_SETTLE_MS = 250;
+
+/**
+ * Re-render a stretch layer's pixels against `spec`. Without its source layer
+ * the band can't be re-rendered, so it keeps its pixels.
+ */
+function renderStretchPixels(layers: Layer[], layer: Layer, spec: StretchSpec, thumbnail: boolean): Layer {
+  const source = layers.find((l) => l.id === spec.sourceLayerId);
+  if (!source) return { ...layer, stretch: spec };
+  return rerenderStretchLayer(layer, spec, source, protectedSubject(layers, spec.sourceLayerId), { thumbnail });
+}
 
 const EMPTY_DOC: LayerDocument = { width: 0, height: 0, layers: [] };
 const MAX_HISTORY = 30;
@@ -183,6 +197,46 @@ export function useLayers(): UseLayersReturn {
     syncHistory();
   }, [syncHistory]);
 
+  /** Swap one layer for a new version without touching the undo stack. */
+  const replaceLayer = useCallback((id: string, make: (layer: Layer) => Layer) => {
+    const prev = docRef.current;
+    const layer = prev.layers.find((l) => l.id === id);
+    if (!layer) return;
+    const updated = make(layer);
+    if (updated === layer) return;
+    const next: LayerDocument = { ...prev, layers: prev.layers.map((l) => (l.id === id ? updated : l)) };
+    docRef.current = next;
+    setDoc(next);
+  }, []);
+
+  /** Stretch layers whose pixels are waiting for the next frame, by id. */
+  const pendingRenders = useRef(new Map<string, number>());
+  /** Stretch layers whose panel thumbnails are waiting for the band to settle, by id. */
+  const thumbnailTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  const cancelPendingRender = useCallback((id: string) => {
+    const frame = pendingRenders.current.get(id);
+    if (frame !== undefined) cancelAnimationFrame(frame);
+    pendingRenders.current.delete(id);
+  }, []);
+
+  const scheduleThumbnail = useCallback((id: string) => {
+    clearTimeout(thumbnailTimers.current.get(id));
+    thumbnailTimers.current.set(id, setTimeout(() => {
+      thumbnailTimers.current.delete(id);
+      replaceLayer(id, (layer) => ({ ...layer, thumbnail: makeThumbnail(layer.canvas) }));
+    }, THUMBNAIL_SETTLE_MS));
+  }, [replaceLayer]);
+
+  useEffect(() => {
+    const renders = pendingRenders.current;
+    const timers = thumbnailTimers.current;
+    return () => {
+      renders.forEach((frame) => cancelAnimationFrame(frame));
+      timers.forEach((timer) => clearTimeout(timer));
+    };
+  }, []);
+
   const patchTransient = useCallback((id: string, patch: Partial<Layer>) => {
     const prev = docRef.current;
     const next: LayerDocument = {
@@ -262,23 +316,31 @@ export function useLayers(): UseLayersReturn {
     if (!layer?.stretch) return;
 
     const spec: StretchSpec = { ...layer.stretch, ...patch };
-    const source = prev.layers.find((l) => l.id === spec.sourceLayerId);
-    // Without its source layer the band can't be re-rendered; keep the pixels.
-    const updated = source
-      ? rerenderStretchLayer(layer, spec, source, protectedSubject(prev.layers, spec.sourceLayerId))
-      : { ...layer, stretch: spec };
-    const next: LayerDocument = {
-      ...prev,
-      layers: prev.layers.map((l) => (l.id === id ? updated : l)),
-    };
 
     if (transient) {
-      docRef.current = next;
-      setDoc(next);
-    } else {
-      commit(() => next);
+      // The spec lands now, so handles track the pointer exactly; pixels catch
+      // up once per frame however fast pointer events arrive.
+      replaceLayer(id, (current) => ({ ...current, stretch: spec }));
+      if (!pendingRenders.current.has(id)) {
+        pendingRenders.current.set(id, requestAnimationFrame(() => {
+          pendingRenders.current.delete(id);
+          const layers = docRef.current.layers;
+          replaceLayer(id, (current) => (
+            current.stretch ? renderStretchPixels(layers, current, current.stretch, false) : current
+          ));
+          scheduleThumbnail(id);
+        }));
+      }
+      return;
     }
-  }, [commit]);
+
+    cancelPendingRender(id);
+    const updated = renderStretchPixels(prev.layers, layer, spec, true);
+    commit(() => ({
+      ...prev,
+      layers: prev.layers.map((l) => (l.id === id ? updated : l)),
+    }));
+  }, [commit, replaceLayer, scheduleThumbnail, cancelPendingRender]);
 
   const extractToLayer = useCallback((
     sourceId: string,

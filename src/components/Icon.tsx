@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 
 const paths = {
+  menu: <path d="M4 6h16M4 12h16M4 18h16" />,
+  fit: <><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" /><rect x="7" y="7" width="10" height="10" rx="1" /></>,
   home: <><path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path d="M9 21v-8h6v8" /></>,
   undo: <><path d="m8 4-5 5 5 5" /><path d="M3 9h11a6 6 0 0 1 0 12h-3" /></>,
   redo: <><path d="m16 4 5 5-5 5" /><path d="M21 9H10a6 6 0 0 0 0 12h3" /></>,

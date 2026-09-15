@@ -189,6 +189,34 @@
 
 /* --- Recents --- */
 
+.demo-card {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  width: min(100%, 470px);
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.045);
+  color: #fff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.demo-card:hover, .demo-card:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.demo-card > img { flex: 0 0 96px; width: 96px; height: 120px; object-fit: cover; border-radius: 10px; }
+.demo-card-copy { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.demo-card-copy > strong { font-size: 16px; }
+.demo-card-copy > span { font-size: 12px; line-height: 1.4; color: rgba(255, 255, 255, 0.55); }
+.demo-card-copy > .demo-card-eyebrow { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.demo-card-copy > .demo-card-action { margin-top: 4px; color: #fff; font-weight: 500; }
+
 .recent-section {
   width: min(100%, 700px);
   display: flex;

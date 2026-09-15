@@ -1,8 +1,12 @@
 import type { Layer } from '../types/layer';
 import type { Point, StretchSpec } from '../types/stretch';
-import { arcBounds, arcLookup, arcPoint } from '../types/arc-band';
+import { hasCurvedEdges } from '../types/stretch';
+import { arcBounds, arcLookup, arcPoint, edgeTables } from '../types/arc-band';
 import { blendColumn, blendFraction, smearRate, smearStreak, smoothstep, swapRamp } from './edge-blend-profile';
-import { bandLocalToDoc, layerPixels, placeBandLocal, type BandRender } from './stretch-band';
+import { bandLocalToDoc, bandPlacement, layerPixels, patchMesh, placeBandLocal, type BandRender } from './stretch-band';
+import { bandSurface } from './surface';
+import { getGL } from './gl/gl-context';
+import { meltOnGL, type MeltInput } from './gl/melt';
 
 /** Longest arc, in pixels, the melt is laid out along before being read back. */
 const MAX_ARC_LENGTH = 4096;
@@ -114,6 +118,9 @@ export function renderSubjectMelt(spec: StretchSpec, subject: Layer): SubjectMel
   if (strength <= 0 || spec.points.length < 2) return null;
   const columns = Math.max(2, Math.round(Math.abs(spec.width)));
 
+  const onGpu = meltWithGpu(spec, subject, columns, strength);
+  if (onGpu !== undefined) return onGpu;
+
   if (!spec.arc) {
     const length = Math.round(Math.abs(spec.length));
     if (length < 1) return null;
@@ -162,5 +169,56 @@ export function renderSubjectMelt(spec: StretchSpec, subject: Layer): SubjectMel
   return {
     erase: { canvas: textureCanvas(erase, outW, outH), x: minX, y: minY },
     smear: { canvas: textureCanvas(smear, outW, outH), x: minX, y: minY },
+  };
+}
+
+/**
+ * The melt on the GPU, or undefined when there's no GPU (or it can't take
+ * this size) so the CPU path runs. Null means the band itself is degenerate.
+ */
+function meltWithGpu(spec: StretchSpec, subject: Layer, columns: number, strength: number): SubjectMelt | null | undefined {
+  const gpu = getGL();
+  if (!gpu) return undefined;
+
+  let length: number;
+  let geometry: MeltInput['geometry'];
+  if (spec.arc) {
+    const arc = spec.arc;
+    const width = Math.abs(spec.width);
+    length = Math.max(1, Math.round(Math.min(MAX_ARC_LENGTH, Math.abs(arc.sweep) * arc.radius)));
+    const box = arcBounds(arc, width);
+    const minX = Math.floor(box.minX) - 1;
+    const minY = Math.floor(box.minY) - 1;
+    const bounds = { minX, minY, width: Math.ceil(box.maxX) + 1 - minX, height: Math.ceil(box.maxY) + 1 - minY };
+    if (bounds.width < 1 || bounds.height < 1) return null;
+    const tables = edgeTables(arc, width);
+    geometry = { kind: 'arc', arc, width, inner: tables.inner, outer: tables.outer, bounds };
+  } else {
+    length = Math.round(Math.abs(spec.length));
+    if (length < 1) return null;
+    const placement = bandPlacement(spec, columns, length);
+    if (!placement) return null;
+    // A plain rectangle is one affine cell; the GPU still needs it as a mesh.
+    const mesh = placement.mesh ?? patchMesh(spec, bandSurface(spec), 1, 1);
+    geometry = { kind: 'mesh', mesh, bounds: placement.bounds, curved: hasCurvedEdges(spec) };
+  }
+
+  const blend = length * blendFraction(strength);
+  const wander = new Float32Array(columns);
+  const side = new Float32Array(columns);
+  const rate = new Float32Array(columns);
+  for (let x = 0; x < columns; x++) {
+    const column = blendColumn(x, columns, blend);
+    wander[x] = column.wander;
+    side[x] = column.side;
+    rate[x] = smearRate(x, strength);
+  }
+
+  const melted = meltOnGL(gpu, { subject, columns, length, wander, side, rate, ramp: swapRamp(blend), geometry });
+  if (!melted) return undefined;
+  const { minX, minY } = geometry.bounds;
+  return {
+    erase: { canvas: melted.erase, x: minX, y: minY },
+    smear: { canvas: melted.smear, x: minX, y: minY },
   };
 }

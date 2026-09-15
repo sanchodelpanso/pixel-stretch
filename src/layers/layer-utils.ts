@@ -260,6 +260,8 @@ export function rerenderStretchLayer(
   spec: StretchSpec,
   source: Layer,
   subject: Layer | null = null,
+  /** Skip the panel thumbnail — a PNG encode — while a gesture is still changing the band. */
+  { thumbnail = true }: { thumbnail?: boolean } = {},
 ): Layer {
   const band = renderStretchBand(spec, source, subject);
   // A degenerate spec keeps the old pixels rather than blanking the layer.
@@ -272,6 +274,6 @@ export function rerenderStretchLayer(
     height: band.canvas.height,
     x: band.x,
     y: band.y,
-    thumbnail: makeThumbnail(band.canvas),
+    thumbnail: thumbnail ? makeThumbnail(band.canvas) : layer.thumbnail,
   };
 }
