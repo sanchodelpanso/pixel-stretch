@@ -23,7 +23,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      # Skip postinstall scripts: onnxruntime-node (via transformers) downloads Linux
+      # CUDA binaries from NuGet and breaks CI; the browser build never uses it.
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
