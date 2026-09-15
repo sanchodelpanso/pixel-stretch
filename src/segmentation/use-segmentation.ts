@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { SegmentationResult, PointPrompt } from '../types/segmentation';
-import { maskBoundingBox, brushMaskToBox } from './mask-utils';
+import { maskBoundingBox } from './mask-utils';
 import type { SegmentationTask, WorkerResponse } from './worker-types';
 
 export function useSegmentation() {
@@ -16,7 +16,6 @@ export function useSegmentation() {
   const requestId = useRef(0);
   const pointsRef = useRef<PointPrompt[]>([]);
   const encodedRef = useRef(false);
-  const sizeRef = useRef({ width: 0, height: 0 });
 
   useEffect(() => () => {
     requestId.current++;
@@ -53,7 +52,7 @@ export function useSegmentation() {
             const { mask, width, height } = data;
             const bbox = maskBoundingBox(mask, width, height, 0.5);
             setResult(bbox ? { mask, width, height, bbox } : null);
-            if (!bbox) setLoadError('No subject found. Try Tap or Brush to choose a region.');
+            if (!bbox) setLoadError('No subject found. Try Tap to choose a region.');
           }
         };
         worker.onerror = (event) => {
@@ -87,7 +86,6 @@ export function useSegmentation() {
   const startImage = useCallback((type: 'segment' | 'encode', image: ImageData) => {
     resetSelection();
     const input = image;
-    sizeRef.current = { width: input.width, height: input.height };
     dispatch({ type, imageData: input });
   }, [dispatch, resetSelection]);
   const segment = useCallback((image: ImageData) => startImage('segment', image), [startImage]);
@@ -110,15 +108,6 @@ export function useSegmentation() {
     setLoadError(null);
   }, []);
 
-  const refineBrush = useCallback((mask: Uint8Array, width: number, height: number) => {
-    if (!encodedRef.current) return;
-    const box = brushMaskToBox(mask, width, height);
-    if (!box) { clearPoints(); return; }
-    const sx = sizeRef.current.width / width;
-    const sy = sizeRef.current.height / height;
-    dispatch({ type: 'decode', points: [], box: [box[0] * sx, box[1] * sy, box[2] * sx, box[3] * sy] });
-  }, [dispatch, clearPoints]);
-
   const clear = useCallback(() => {
     resetSelection();
     if (workerRef.current) dispatch({ type: 'clear' });
@@ -129,5 +118,5 @@ export function useSegmentation() {
   }, [dispatch, resetSelection]);
 
   return { isModelLoading, loadProgress, loadStatus, loadError, isProcessing, result,
-    segment, encodeImage, addPoint, clearPoints, refineBrush, clear, points, isEncoded };
+    segment, encodeImage, addPoint, clearPoints, clear, points, isEncoded };
 }

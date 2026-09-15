@@ -8,7 +8,7 @@ import type { ArcBand } from '../types/arc-band';
 import { arcFromPull, arcOutline, arcPoint, arcToStraight, straightToArc } from '../types/arc-band';
 import { useLayers } from '../layers/use-layers';
 import { useSegmentation } from '../segmentation/use-segmentation';
-import { layerImageData, hitTestLayers, docMaskToLayerSpace } from '../layers/layer-utils';
+import { layerImageData, hitTestLayers } from '../layers/layer-utils';
 import { exportDocument } from '../layers/compositor';
 import { downloadBlob, exportFilename } from '../utils/export-utils';
 import { encodeProject, projectFilename } from '../project/project-file';
@@ -20,12 +20,12 @@ import { StretchPathEditor } from '../editor/StretchPathEditor';
 import { StretchRectHandles } from '../editor/StretchRectHandles';
 import { StretchArcHandles } from '../editor/StretchArcHandles';
 import { MarchingAnts } from '../editor/MarchingAnts';
-import { BrushTool } from '../editor/BrushTool';
 import { Toolbar } from './Toolbar';
 import { LayersPanel } from './LayersPanel';
 import { SelectionSection } from './SelectionSection';
+import { StretchTools, type StretchControl } from './StretchTools';
 import { StretchPanel } from './StretchPanel';
-import logo from '../assets/logo.png';
+import { Icon } from './Icon';
 import '../editor/StretchOverlays.css';
 import './EditorScreen.css';
 
@@ -43,11 +43,15 @@ interface EditorScreenProps {
 }
 
 const TOOL_HINTS: Record<EditorTool, string> = {
-  move: 'Click a layer to select it · drag to reposition · arrow keys to nudge',
-  'select-auto': 'Auto selects the main subject · use Tap or Brush for a different region',
+  'select-auto': 'Auto selects the main subject · use Tap for a different region',
   'select-tap': 'Click the object to select it · Alt-click to exclude a region',
-  'select-brush': 'Paint roughly over the object, then release to refine',
   stretch: 'Draw a sample path · the main subject will be lifted above the stretch automatically',
+};
+
+const MOBILE_TOOL_HINTS: Record<EditorTool, string> = {
+  'select-auto': 'Automatically select the main subject',
+  'select-tap': 'Tap the object you want to select',
+  stretch: 'Draw a line across the pixels to stretch',
 };
 
 /** Shorter than this and the drag was probably a stray click, not a line. */
@@ -76,7 +80,7 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
   const seg = useSegmentation();
   const { doc, selectedLayer, selectedId } = layers;
 
-  const [tool, setTool] = useState<EditorTool>('move');
+  const [tool, setTool] = useState<EditorTool>('stretch');
   /** Which layer the current segmentation result belongs to. */
   const [selectionLayerId, setSelectionLayerId] = useState<string | null>(null);
   /** The sample path being shaped, before it becomes a band. */
@@ -84,6 +88,7 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
   /** Live rectangle while the band is being pulled off a locked path. */
   const [extruding, setExtruding] = useState<number | null>(null);
   const [bandMode, setBandMode] = useState<BandMode>('straight');
+  const [stretchControl, setStretchControl] = useState<StretchControl>('transform');
   /** Live sweep while an arc band is being pulled off a locked path. */
   const [arcPull, setArcPull] = useState<ArcBand | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -98,14 +103,14 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
 
   const containerRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ id: string; docX: number; docY: number; moved: boolean } | null>(null);
+  const panelRef = useRef<HTMLElement>(null);
   const stretchDragRef = useRef<'draw' | 'extrude' | 'sweep' | null>(null);
   /** Where the sweep was grabbed, relative to the path's midpoint. */
   const sweepGrabRef = useRef<Point>({ x: 0, y: 0 });
 
-  const { segment, encodeImage, addPoint, refineBrush, clear: clearSeg } = seg;
+  const { segment, encodeImage, addPoint, clear: clearSeg } = seg;
   const {
-    initFromImage, initFromDocument, select, beginHistory, translateTransient, nudge,
+    initFromImage, initFromDocument, select, beginHistory,
     extractToLayer, addStretchLayer, addProtectedStretch, updateStretch,
   } = layers;
 
@@ -116,6 +121,8 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
     else initFromDocument(source.document, source.selectedLayerId);
   }, [source, initFromImage, initFromDocument]);
 
+  useEffect(() => { setStretchControl('transform'); }, [selectedId, tool]);
+
   // --- Fit the document into the viewport ---------------------------------
 
   useEffect(() => {
@@ -123,8 +130,8 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
     if (!el || !doc.width || !doc.height) return;
 
     const fit = () => {
-      const inset = window.matchMedia('(max-width: 760px)').matches ? 20 : 56;
-      const available = { w: el.clientWidth - inset, h: el.clientHeight - inset };
+      const mobile = window.matchMedia('(max-width: 760px)').matches;
+      const available = { w: el.clientWidth - (mobile ? 32 : 80), h: el.clientHeight - 128 };
       if (available.w <= 0 || available.h <= 0) return;
       const scale = Math.min(available.w / doc.width, available.h / doc.height);
       setView({
@@ -150,7 +157,7 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
     primedRef.current = key;
     primedCanvasRef.current = selectedLayer.canvas;
 
-    if (tool === 'move' || tool === 'stretch') {
+    if (tool === 'stretch') {
       clearSeg();
       return;
     }
@@ -171,8 +178,10 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
   }, [seg.result, selectedLayer, selectionLayerId]);
 
   useEffect(() => {
-    if (selection || (tool === 'stretch' && selectedLayer?.stretch)) setIsPanelOpen(true);
-  }, [selection, tool, selectedLayer?.stretch]);
+    // Only explicit selection tools reveal extraction actions. A stretch's
+    // automatic subject mask and geometry updates must never open the sheet.
+    if (selection && tool !== 'stretch') setIsPanelOpen(true);
+  }, [selection, tool]);
 
   const deselect = useCallback(() => {
     clearSeg();
@@ -235,6 +244,11 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 
       if (!draft) {
+        const hit = hitTestLayers(doc.layers, point.x, point.y);
+        if (hit?.stretch) {
+          select(hit.id);
+          return;
+        }
         // Nothing yet: drag out the initial straight two-point path.
         stretchDragRef.current = 'draw';
         setDraft({ points: [point, { ...point }], locked: false, layerId: null });
@@ -255,15 +269,6 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
       }
       // While a path is open for shaping, bare-canvas drags do nothing —
       // its own handles own the interaction.
-      return;
-    }
-
-    if (tool === 'move') {
-      const hit = hitTestLayers(doc.layers, point.x, point.y);
-      if (!hit) return;
-      select(hit.id);
-      dragRef.current = { id: hit.id, docX: point.x, docY: point.y, moved: false };
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       return;
     }
 
@@ -300,21 +305,9 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
       setExtruding((point.x - from.x) * out.x + (point.y - from.y) * out.y);
       return;
     }
-
-    const drag = dragRef.current;
-    if (!drag) return;
-    // Snapshot once, on the first actual movement, so one drag is one undo.
-    if (!drag.moved) {
-      drag.moved = true;
-      beginHistory();
-    }
-    translateTransient(drag.id, point.x - drag.docX, point.y - drag.docY);
-    drag.docX = point.x;
-    drag.docY = point.y;
-  }, [draft, toDocPoint, beginHistory, translateTransient]);
+  }, [draft, toDocPoint]);
 
   const handlePointerUp = useCallback(() => {
-    dragRef.current = null;
     const gesture = stretchDragRef.current;
     stretchDragRef.current = null;
     if (!gesture || !draft) return;
@@ -380,17 +373,10 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
     if (!selectedLayer?.stretch) return;
     beginHistory();
     setTool('stretch');
+    setIsPanelOpen(false);
     setBandMode(selectedLayer.stretch.arc ? 'arc' : 'straight');
     setDraft({ points: selectedLayer.stretch.points, locked: false, layerId: selectedLayer.id });
   }, [selectedLayer, beginHistory]);
-
-  const handleBrushComplete = useCallback((mask: Uint8Array, w: number, h: number) => {
-    if (!selectedLayer) return;
-    // The brush paints in document space; SAM was encoded on one layer.
-    const layerMask = docMaskToLayerSpace(mask, w, h, selectedLayer);
-    setSelectionLayerId(selectedLayer.id);
-    refineBrush(layerMask, selectedLayer.width, selectedLayer.height);
-  }, [selectedLayer, refineBrush]);
 
   // --- Stretch editing -----------------------------------------------------
 
@@ -400,6 +386,7 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
 
   const handleBandModeChange = useCallback((next: BandMode) => {
     setBandMode(next);
+    setStretchControl('transform');
     if (draft || !stretchSpec || !selectedId) return;
     // Switching a finished band curls or uncurls it in place.
     if (next === 'arc' && !stretchSpec.arc) {
@@ -416,6 +403,11 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
     [selectedId, updateStretch],
   );
 
+  const openStretchProperties = useCallback(() => {
+    setIsPanelOpen(true);
+    panelRef.current?.scrollTo({ top: 0 });
+  }, []);
+
   // --- Actions -------------------------------------------------------------
 
   const handleExtract = useCallback((mode: ExtractMode) => {
@@ -425,7 +417,7 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
     );
     if (created) {
       deselect();
-      setTool('move');
+      setTool('stretch');
     }
   }, [selection, selectedLayer, extractToLayer, deselect]);
 
@@ -497,25 +489,14 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
         setExtruding(null);
         setArcPull(null);
         setNotice(null);
-        setTool('move');
+        setTool('stretch');
         return;
-      }
-      if (!selectedId) return;
-
-      const step = e.shiftKey ? 10 : 1;
-      const delta: Record<string, [number, number]> = {
-        ArrowLeft: [-step, 0], ArrowRight: [step, 0],
-        ArrowUp: [0, -step], ArrowDown: [0, step],
-      };
-      if (delta[e.key]) {
-        e.preventDefault();
-        nudge(selectedId, delta[e.key][0], delta[e.key][1]);
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedId, nudge, deselect, layers, isPanelOpen]);
+  }, [deselect, layers, isPanelOpen]);
 
   // --- Derived render values ----------------------------------------------
 
@@ -531,7 +512,7 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
     };
   }, [selection, selectedLayer, doc.width, doc.height]);
 
-  // The transform box belongs to the stretch tool; it would fight the move tool.
+  // Show band controls while its sample path is locked.
   const showRectHandles = stretchSpec && tool === 'stretch' && !draft;
 
   const draftCurve = useMemo(
@@ -582,6 +563,12 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
 
   const stretchHasSubject = Boolean(stretchSpec)
     && doc.layers.some((l) => l.protectionSourceId === stretchSpec!.sourceLayerId && !l.stretch);
+  /** A band laid over its lifted subject, so its streaks can cover and dissolve it. */
+  const stretchOverSubject = Boolean(stretchSpec) && (() => {
+    const band = doc.layers.findIndex((layer) => layer.id === selectedId);
+    const subject = doc.layers.findIndex((layer) => layer.protectionSourceId === stretchSpec!.sourceLayerId && !layer.stretch);
+    return subject >= 0 && band > subject;
+  })();
   const stretchSource = stretchSpec
     ? doc.layers.find((l) => l.id === stretchSpec.sourceLayerId) ?? null
     : null;
@@ -591,7 +578,7 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
       ? bandMode === 'arc'
         ? 'Drag away from the path and curve round to sweep the band · come back to the start to close a ring'
         : 'Drag away from the path to pull the band out'
-      : 'Drag the hollow midpoints to bend the path · double-click a point to remove it · 🔒 to lock'
+      : 'Drag the hollow midpoints to bend the path · double-click a point to remove it · ✓ to finish'
     : stretchSpec
       ? stretchSpec.arc
         ? 'Centre sets the radius · square the width · round end the sweep · drag a ◇ on an edge to add a spline point'
@@ -599,6 +586,7 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
         ? 'Round handles make a 2D wave · corner handles keep the fold effect · △ removes or restores an edge'
         : 'Drag a corner to skew the rectangle in 2D · △ removes or restores an edge · use the curve button for waves'
       : TOOL_HINTS.stretch;
+  const stretchHelp = stretchSpec && !draft ? `${stretchHint} · double-click the stretch for properties` : stretchHint;
 
   const busy = seg.isModelLoading || seg.isProcessing;
   const statusText = pendingStretch
@@ -610,33 +598,52 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
       : seg.isProcessing
         ? 'Working…'
       : tool === 'stretch'
-        ? stretchHint
+        ? stretchHelp
         : TOOL_HINTS[tool];
+
+  const mobileStatusText = busy ? statusText
+    : tool !== 'stretch' ? MOBILE_TOOL_HINTS[tool]
+    : draft ? draft.locked
+      ? bandMode === 'arc' ? 'Drag around the path to sweep an arc' : 'Drag from the path to pull out a stretch'
+      : 'Shape your path, then tap the checkmark'
+    : stretchSpec ? stretchControl === 'colors'
+      ? 'Slide right for fewer colors · up for softer blends'
+      : stretchControl === 'edges'
+        ? stretchSpec.arc ? 'Drag an edge point to shape the arc' : 'Tap − to remove an edge · + to restore it'
+        : 'Drag to shape · double-tap stretch for settings'
+      : MOBILE_TOOL_HINTS.stretch;
 
   const scale = view.width && doc.width ? view.width / doc.width : 1;
 
   return (
     <div className="editor-screen">
       <header className="editor-header">
-        <button className="editor-brand" aria-label="Back to start" title="Back to start" onClick={handleExit}>
-          <img className="editor-logo" src={logo} alt="" />
-          PixelStretch
-        </button>
-
-        <div className="editor-header-actions">
-          <button className="header-btn icon-btn" aria-label="Undo" disabled={!layers.canUndo} title="Undo (⌘Z)" onClick={layers.undo}>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7l-5 5 5 5M5 12h8a6 6 0 016 6" /></svg>
-          </button>
-          <button className="header-btn icon-btn" aria-label="Redo" disabled={!layers.canRedo} title="Redo (⇧⌘Z)" onClick={layers.redo}>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 7l5 5-5 5m4-5h-8a6 6 0 00-6 6" /></svg>
+        <div className="editor-navigation">
+          <button className="editor-brand" aria-label="Back to start" title="Back to start" onClick={handleExit}>
+            <Icon name="home" />
+            <span>PixelStretch</span>
           </button>
           <span className="header-divider" />
-          <button className="header-btn action-btn" aria-label="Save project" disabled={isSavingProject} onClick={handleSaveProject}>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h12l2 2v16H5V3zm3 0v6h8V3M8 21v-7h8v7" /></svg>
+          <button className="header-btn icon-btn" aria-label="Undo" disabled={!layers.canUndo} title="Undo (⌘Z)" onClick={layers.undo}>
+            <Icon name="undo" />
+          </button>
+          <button className="header-btn icon-btn" aria-label="Redo" disabled={!layers.canRedo} title="Redo (⇧⌘Z)" onClick={layers.redo}>
+            <Icon name="redo" />
+          </button>
+        </div>
+
+        <div className="editor-document" title={name}>
+          <span>{name}</span>
+          <span className="editor-document-size">{doc.width} × {doc.height}</span>
+        </div>
+
+        <div className="editor-header-actions">
+          <button className="header-btn action-btn" aria-label="Save project" title="Save project" disabled={isSavingProject} onClick={handleSaveProject}>
+            <Icon name="save" />
             <span>{isSavingProject ? 'Saving…' : 'Save'}</span>
           </button>
-          <button className="header-btn primary action-btn" aria-label="Export PNG" disabled={isExporting} onClick={handleExport}>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4l4 4 4-4M5 17v4h14v-4" /></svg>
+          <button className="header-btn primary action-btn" aria-label="Export PNG" title="Export PNG" disabled={isExporting} onClick={handleExport}>
+            <Icon name="export" />
             <span>{isExporting ? 'Exporting…' : 'Export'}</span>
           </button>
         </div>
@@ -654,7 +661,7 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
             if (next !== 'stretch') setDraft(null);
             if (next === tool && selectedLayer) {
               if (next === 'select-auto') segment(layerImageData(selectedLayer));
-              else if (next === 'select-tap' || next === 'select-brush') encodeImage(layerImageData(selectedLayer));
+              else if (next === 'select-tap') encodeImage(layerImageData(selectedLayer));
             }
             setTool(next);
           }}
@@ -664,6 +671,47 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
         />
 
         <main className="editor-stage" ref={containerRef}>
+          {selectedLayer && tool !== 'stretch' && (
+            <div className="canvas-actions" role="group" aria-label="Selected layer actions">
+              <span className="canvas-layer-name" title={selectedLayer.name}>
+                <Icon name="layers" size={18} /><span>{selectedLayer.name}</span>
+              </span>
+              <span className="canvas-actions-divider" />
+              <button aria-label="Duplicate selected layer" title="Duplicate layer" onClick={() => layers.duplicate(selectedLayer.id)}>
+                <Icon name="duplicate" size={21} />
+              </button>
+              <button aria-label="Delete selected layer" title="Delete layer" disabled={doc.layers.length <= 1} onClick={() => layers.remove(selectedLayer.id)}>
+                <Icon name="delete" size={21} />
+              </button>
+            </div>
+          )}
+          {tool === 'stretch' && selectedLayer && (
+            <StretchTools
+              key={`${selectedId}-${Boolean(draft)}`}
+              spec={draft ? null : stretchSpec}
+              bandMode={shownBandMode}
+              control={stretchControl}
+              hasSubject={stretchHasSubject}
+              canDelete={doc.layers.length > 1}
+              onBandModeChange={handleBandModeChange}
+              onControlChange={setStretchControl}
+              onChange={handleStretchChange}
+              onBeginEdit={beginHistory}
+              overSubject={stretchOverSubject}
+              onOverSubjectChange={(over) => {
+                const band = doc.layers.findIndex((layer) => layer.id === selectedLayer.id);
+                const subject = doc.layers.findIndex((layer) => (
+                  layer.protectionSourceId === stretchSpec?.sourceLayerId && !layer.stretch
+                ));
+                // Removing the band shifts the subject down when the band was below it,
+                // so the subject's own index is the right target both ways.
+                if (band >= 0 && subject >= 0 && over !== band > subject) layers.reorder(band, subject);
+              }}
+              onEditPath={handleEditPath}
+              onDuplicate={() => layers.duplicate(selectedLayer.id)}
+              onDelete={() => layers.remove(selectedLayer.id)}
+            />
+          )}
           {view.width > 0 && (
             <div
               ref={wrapperRef}
@@ -677,27 +725,6 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
               onPointerCancel={handlePointerUp}
             >
               <LayerCanvas doc={doc} viewWidth={view.width} viewHeight={view.height} />
-
-              {tool === 'stretch' && selectedLayer && (
-                <div
-                  className="stretch-band-mode"
-                  role="group"
-                  aria-label="Band shape"
-                  onPointerDown={(event) => event.stopPropagation()}
-                >
-                  {(['straight', 'arc'] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      className={shownBandMode === mode ? 'active' : ''}
-                      aria-pressed={shownBandMode === mode}
-                      onClick={() => handleBandModeChange(mode)}
-                    >
-                      {mode === 'arc' ? 'Arc' : 'Straight'}
-                    </button>
-                  ))}
-                </div>
-              )}
 
               {selection && selectedLayer && (
                 <SelectionOverlay
@@ -719,6 +746,7 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
 
               {showRectHandles && stretchSpec?.arc && (
                 <StretchArcHandles
+                  key={selectedId}
                   spec={stretchSpec}
                   arc={stretchSpec.arc}
                   docWidth={doc.width}
@@ -726,21 +754,22 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
                   viewHeight={view.height}
                   onChange={handleStretchChange}
                   onBeginDrag={beginHistory}
-                  onUnlock={handleEditPath}
-                  hasSubject={stretchHasSubject}
+                  onOpenProperties={openStretchProperties}
+                  control={stretchControl}
                 />
               )}
 
               {showRectHandles && stretchSpec && !stretchSpec.arc && (
                 <StretchRectHandles
+                  key={selectedId}
                   spec={stretchSpec}
                   docWidth={doc.width}
                   viewWidth={view.width}
                   viewHeight={view.height}
                   onChange={handleStretchChange}
                   onBeginDrag={beginHistory}
-                  onUnlock={handleEditPath}
-                  hasSubject={stretchHasSubject}
+                  onOpenProperties={openStretchProperties}
+                  control={stretchControl}
                 />
               )}
 
@@ -786,15 +815,7 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
                 </svg>
               )}
 
-              <BrushTool
-                width={view.width}
-                height={view.height}
-                imageWidth={doc.width}
-                imageHeight={doc.height}
-                onBrushComplete={handleBrushComplete}
-                key={selectedLayer?.id}
-                active={tool === 'select-brush' && seg.isEncoded}
-              />
+
 
               {busy && (
                 <div className="editor-busy">
@@ -811,24 +832,28 @@ export function EditorScreen({ source, name, recentProjectId, onExit }: EditorSc
           )}
 
           <div
+            role="status"
             className={`editor-hint ${notice ? 'warn' : ''} ${seg.loadError && !busy ? 'error' : ''}`}
           >
             {seg.loadError && !busy
               ? `Model error — ${seg.loadError}`
-              : notice ?? statusText}
+              : notice ?? <>
+                <span className="editor-hint-desktop">{statusText}</span>
+                <span className="editor-hint-mobile">{mobileStatusText}</span>
+              </>}
           </div>
         </main>
 
-        <aside className={`right-panel ${isPanelOpen ? 'open' : ''}`} aria-label="Layers and properties">
+        <aside ref={panelRef} id="layers-and-properties" className={`right-panel ${isPanelOpen ? 'open' : ''}`} aria-label="Layers and properties">
           <div className="panel-mobile-header">
             <span className="panel-drag-handle" />
             <strong>Layers &amp; properties</strong>
             <button aria-label="Close panel" onClick={() => setIsPanelOpen(false)}>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              <Icon name="check" />
             </button>
           </div>
           {selection && (
-            <SelectionSection onExtract={handleExtract} onDeselect={() => { deselect(); setTool('move'); }} />
+            <SelectionSection onExtract={handleExtract} onDeselect={() => { deselect(); setTool('stretch'); }} />
           )}
 
           {selectedLayer && stretchSpec && (

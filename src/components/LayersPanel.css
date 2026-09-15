@@ -1,6 +1,6 @@
 .right-panel {
-  width: 280px;
-  flex: 0 0 280px;
+  width: 296px;
+  flex: 0 0 296px;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -11,17 +11,16 @@
 }
 
 .panel-section {
-  padding: 14px 14px 16px;
+  padding: 20px 16px;
   border-bottom: 1px solid var(--border);
 }
 
 .panel-section-title {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  margin-bottom: 10px;
+  letter-spacing: 0;
+  color: var(--text-primary);
+  margin-bottom: 14px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -56,7 +55,7 @@
   background: var(--glass-bg);
   color: var(--text-primary);
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
@@ -104,14 +103,14 @@
 .layers-list {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 6px;
 }
 
 .layer-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 7px;
+  padding: 8px 4px;
   border-radius: 8px;
   border: 1px solid transparent;
   cursor: pointer;
@@ -142,8 +141,8 @@
   flex: 0 0 auto;
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 30px;
+  height: 36px;
   padding: 0;
   border: none;
   border-radius: 5px;
@@ -198,7 +197,7 @@
 }
 
 .layer-name {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text-primary);
   white-space: nowrap;
@@ -214,7 +213,7 @@
   background: rgba(0, 0, 0, 0.5);
   color: var(--text-primary);
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: 13px;
   outline: none;
 }
 
@@ -222,7 +221,7 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -297,7 +296,12 @@
 
 .layer-actions button {
   flex: 1;
-  padding: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 8px;
   border-radius: 7px;
   border: 1px solid var(--border-hover);
   background: var(--glass-bg);
@@ -352,6 +356,8 @@
   }
 
   .layer-row {
+    display: grid;
+    grid-template-columns: 40px 42px minmax(0, 1fr) 40px;
     min-height: 62px;
     padding: 7px 6px;
     gap: 7px;
@@ -360,8 +366,8 @@
 
   .layer-visibility,
   .layer-lock {
-    width: 38px;
-    height: 38px;
+    width: 40px;
+    height: 44px;
     border-radius: 10px;
   }
 
@@ -390,14 +396,16 @@
   }
 
   .mobile-layer-order {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+    display: none;
+    flex-direction: row;
+    justify-content: flex-end;
+    grid-column: 2 / -1;
+    gap: 6px;
   }
 
   .mobile-layer-order button {
-    width: 28px;
-    height: 25px;
+    width: 44px;
+    height: 44px;
     display: grid;
     place-items: center;
     border: 0;
@@ -419,4 +427,9 @@
     stroke-linecap: round;
     stroke-linejoin: round;
   }
+}
+
+@media (max-width: 760px) {
+  .layer-row.selected .mobile-layer-order { display: flex; }
+  .layer-row:only-child .mobile-layer-order { display: none; }
 }

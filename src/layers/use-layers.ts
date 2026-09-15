@@ -9,7 +9,6 @@ import {
   duplicateLayer,
   extractLayer,
   eraseMaskedRegion,
-  translateLayer,
   createStretchLayer,
   rerenderStretchLayer,
   protectedSubject,
@@ -33,13 +32,9 @@ export interface UseLayersReturn {
   duplicate: (id: string) => void;
   /** Move a layer within the stack. Both indices are bottom-first. */
   reorder: (from: number, to: number) => void;
-  /** Move a layer by a delta, as one undo step. */
-  nudge: (id: string, dx: number, dy: number) => void;
-  /** Move a layer by a delta without touching the undo stack. */
-  translateTransient: (id: string, dx: number, dy: number) => void;
   /**
    * Snapshot the current document for undo without changing it. Call once at
-   * the start of a continuous gesture, then use `setPosition` freely.
+   * the start of a continuous gesture, then apply transient updates freely.
    */
   beginHistory: () => void;
   /** Patch a layer without touching the undo stack — for continuous gestures. */
@@ -181,23 +176,6 @@ export function useLayers(): UseLayersReturn {
       return { ...prev, layers };
     });
   }, [commit]);
-
-  const nudge = useCallback((id: string, dx: number, dy: number) => {
-    commit((prev) => ({
-      ...prev,
-      layers: prev.layers.map((l) => (l.id === id ? translateLayer(l, dx, dy) : l)),
-    }));
-  }, [commit]);
-
-  const translateTransient = useCallback((id: string, dx: number, dy: number) => {
-    const prev = docRef.current;
-    const next: LayerDocument = {
-      ...prev,
-      layers: prev.layers.map((l) => (l.id === id ? translateLayer(l, dx, dy) : l)),
-    };
-    docRef.current = next;
-    setDoc(next);
-  }, []);
 
   const beginHistory = useCallback(() => {
     past.current = [...past.current.slice(-(MAX_HISTORY - 1)), docRef.current];
@@ -387,8 +365,6 @@ export function useLayers(): UseLayersReturn {
     remove,
     duplicate,
     reorder,
-    nudge,
-    translateTransient,
     beginHistory,
     patchTransient,
     addStretchLayer,

@@ -26,6 +26,9 @@ export const NO_WARP: Warp = [
  */
 export type WarpMode = 'straight' | 'curved';
 
+/** How a band draws out its sampled pixels. */
+export type StretchStyle = 'smooth' | 'pixel' | 'motion';
+
 /** The two Bézier controls of one edge, as offsets from its straight thirds. */
 export type EdgeControls = [WarpOffset, WarpOffset];
 
@@ -112,6 +115,55 @@ export interface StretchSpec {
    * transparent instead of stretching that background.
    */
   subjectOnly?: boolean;
+  /**
+   * Melt the lifted subject into this band: where the subject overlaps the
+   * band, it is erased from the sample line outwards over this fraction of the
+   * band's length, unevenly across the streaks, so the streaks beneath show
+   * through and the object's edge smears into them. 0 leaves the subject whole.
+   */
+  edgeBlend?: number;
+  /**
+   * Merge the colours sampled along the path into this many solid stripes
+   * across the band. Absent keeps every sampled colour.
+   */
+  colorCount?: number;
+  /**
+   * Width in band pixels of the gradient softening each border between merged
+   * colour stripes. Absent or zero keeps hard borders.
+   */
+  colorBlend?: number;
+  /**
+   * Cut a fine screen of lines into the band, every few band pixels across and
+   * along it, following its rotation and warp. 0–1 strength; absent is none.
+   */
+  gridTexture?: number;
+  /** Grid cell size in band pixels, line to line. Absent is the default fine grid. */
+  gridSize?: number;
+  /** `cut` (default) cuts lines into the stretch; `lines` keeps only the lines, over transparent cells. */
+  gridStyle?: 'cut' | 'lines';
+  /** Cut lines' colour as `#rrggbb`; absent leaves them see-through. Grid-only lines always keep the stretch's colours. */
+  gridColor?: string;
+  /**
+   * How the sampled pixels are drawn out. `smooth` (the default) runs every
+   * colour to the far end; `pixel` breaks the band into blocky streaks of
+   * uneven reach that dissolve at their ends; `motion` runs soft streaks of
+   * uneven length that fade out, like a long-exposure blur.
+   */
+  style?: StretchStyle;
+  /** Pixel style: streak thickness in band pixels. */
+  pixelSize?: number;
+  /** Pixel style: 0 = even, unbroken streaks; 1 = very ragged and broken. */
+  pixelScatter?: number;
+  /** Pixel style: 0 = streaks start at the sample line; 1 = that end dissolves into scattered blocks too. */
+  pixelStartScatter?: number;
+  /** Pixel style: 0 = crisp blocks; 1 = block edges feathered by about half a block. */
+  pixelSoftness?: number;
+  /** Motion style: 0 = every streak reaches the far end; 1 = lengths vary widely. */
+  motionScatter?: number;
+  /** Motion style: 0 = crisp streaks, short fades; 1 = long soft fades, streaks blurred together. */
+  motionSoftness?: number;
+  /** Motion style: 0 = full strength at the sample line; 1 = fades in over most of the band. */
+  motionFadeIn?: number;
   /**
    * Sweep the band round a pivot instead of pulling it out straight. While set,
    * `width` is the band's radial thickness and the rectangle fields (`anchor`,

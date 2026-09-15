@@ -2,14 +2,16 @@ import { useCallback, useRef, useState } from 'react';
 import type { StretchSpec, Point } from '../types/stretch';
 import type { EdgeWarp, RemovableEdge } from '../types/stretch';
 import {
-  rectBasis, rectCenter, anchorForCentre, chordAngle,
+  rectBasis, rectCenter, anchorForCentre,
   toEdgeOffset, isWarped, edgeCurves, pullCorner, skewCorner, NO_EDGE_WARP,
   isMergedCorner, setRemovedEdge,
 } from '../types/stretch';
 import { bendPoint } from '../rendering/projection';
-import { SubjectOnlyToggle } from './SubjectOnlyToggle';
+import { useDoubleTap } from './useDoubleTap';
+import { CanvasHandle } from './CanvasHandle';
+import type { StretchControl } from '../components/StretchTools';
+import { ColorSimplifyGrip } from './ColorSimplifyGrip';
 import { bandSurface } from '../rendering/surface';
-import { clamp } from '../utils/math-utils';
 
 /** Which edges a handle moves, in the rectangle's own frame. */
 type HandleId =
@@ -27,10 +29,8 @@ interface StretchRectHandlesProps {
   viewHeight: number;
   onChange: (patch: Partial<StretchSpec>, transient: boolean) => void;
   onBeginDrag: () => void;
-  /** Reopen the path for editing. */
-  onUnlock: () => void;
-  /** Whether the band's source has a lifted subject it could read from alone. */
-  hasSubject: boolean;
+  onOpenProperties: () => void;
+  control: StretchControl;
 }
 
 /** Each edge's two Bézier controls, as flat descriptors for rendering. */
@@ -65,7 +65,7 @@ const HANDLES: Record<HandleId, { u: number; v: number; movesW: boolean; movesL:
 
 /**
  * The locked band's transform box: eight handles in the rectangle's own
- * rotated frame, plus a live size readout. Dragging an edge moves only that
+ * rotated frame. Dragging an edge moves only that
  * edge, so the opposite one stays put; dragging a corner bends the sheet, and
  * each edge's two round handles then reshape the bend.
  */
@@ -76,20 +76,21 @@ export function StretchRectHandles({
   viewHeight,
   onChange,
   onBeginDrag,
-  onUnlock,
-  hasSubject,
+  onOpenProperties,
+  control,
 }: StretchRectHandlesProps) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const doubleTap = useDoubleTap(onOpenProperties);
   type Drag =
     | { kind: 'handle'; id: HandleId; start: Point; width: number; length: number; anchor: Point }
     | { kind: 'warp'; corner: number }
     | { kind: 'edge'; edge: number; control: 0 | 1 }
-    | { kind: 'bend'; start: Point; initial: number }
-    | { kind: 'move'; last: Point }
-    | { kind: 'rotate' };
+    | { kind: 'move'; last: Point; started: boolean }
+    | { kind: 'rotate'; angle: number; rotation: number };
   const dragging = useRef<Drag | null>(null);
   /** Tapping a side removes that edge, tapping the apex restores it; nothing drags. */
-  const [vertexMode, setVertexMode] = useState(false);
+  const vertexMode = control === 'edges';
+  const [isDragging, setIsDragging] = useState(false);
 
   const scale = viewWidth / docWidth;
   const toView = (p: Point) => ({ x: p.x * scale, y: p.y * scale });
@@ -107,7 +108,7 @@ export function StretchRectHandles({
     e.stopPropagation();
     e.preventDefault();
     dragging.current = drag;
-    onBeginDrag();
+    if (drag.kind !== 'move') { onBeginDrag(); setIsDragging(true); }
     (e.target as Element).setPointerCapture(e.pointerId);
   }, [onBeginDrag]);
 
@@ -119,6 +120,13 @@ export function StretchRectHandles({
     if (!point) return;
 
     if (drag.kind === 'move') {
+      // A tap opens no undo entry and small touch jitter must not move the band.
+      if (!drag.started) {
+        if (Math.hypot(point.x - drag.last.x, point.y - drag.last.y) * scale <= 8) return;
+        onBeginDrag();
+        drag.started = true;
+        setIsDragging(true);
+      }
       // Only the rectangle moves; the path keeps sampling where it was.
       onChange({
         anchor: {
@@ -147,26 +155,15 @@ export function StretchRectHandles({
       return;
     }
 
-    if (drag.kind === 'bend') {
-      const side = spec.length < 0 ? -1 : 1;
-      const dx = point.x - drag.start.x;
-      const dy = point.y - drag.start.y;
-      const distance = (dx * out.x + dy * out.y) * side;
-      const sensitivity = Math.max(Math.abs(spec.length) * 0.14, 24);
-      onChange({ bend: clamp(drag.initial + distance / sensitivity, -2, 2) }, true);
-      return;
-    }
-
     if (drag.kind === 'rotate') {
       const centre = rectCenter(spec);
-      // The grip stands off the rectangle's -out side, a quarter turn ahead
-      // of its `along` axis, so back that quarter turn out of the cursor angle.
-      let angle = Math.atan2(point.y - centre.y, point.x - centre.x) - Math.PI / 2;
+      const angle = Math.atan2(point.y - centre.y, point.x - centre.x);
+      const delta = Math.atan2(Math.sin(angle - drag.angle), Math.cos(angle - drag.angle));
+      let rotation = drag.rotation + delta;
       if (e.shiftKey) {
         const step = (SNAP_DEGREES * Math.PI) / 180;
-        angle = Math.round(angle / step) * step;
+        rotation = Math.round(rotation / step) * step;
       }
-      const rotation = angle - chordAngle(spec.points);
       onChange({ rotation, anchor: anchorForCentre(spec, centre, rotation) }, true);
       return;
     }
@@ -202,13 +199,14 @@ export function StretchRectHandles({
     if (anchor.x !== spec.anchor.x || anchor.y !== spec.anchor.y) patch.anchor = anchor;
 
     onChange(patch, true);
-  }, [spec, along, out, toDoc, onChange]);
+  }, [spec, along, out, toDoc, onChange, scale, onBeginDrag]);
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
     if (!dragging.current) return;
     e.stopPropagation();
     // onBeginDrag already snapshotted the pre-drag state for undo.
     dragging.current = null;
+    setIsDragging(false);
   }, []);
 
   const curvedMode = spec.warpMode === 'curved';
@@ -253,22 +251,17 @@ export function StretchRectHandles({
       ])
     : [];
 
-  const badgeAt = toView(projectedPoint(0.5, 0));
-  const unlockAt = toView(projectedPoint(0, 0));
-  const depthBase = surfaceAt(0.5, 0.5);
-  const depthAt = projectedPoint(0.5, 0.5);
-  const depthBaseView = toView(depthBase);
-  const depthView = toView(depthAt);
-  // Rotate grip stands off the edge the badge sits on, clear of the handles.
-  const rotateAt = {
-    x: badgeAt.x - out.x * 34 * (spec.length < 0 ? -1 : 1),
-    y: badgeAt.y - out.y * 34 * (spec.length < 0 ? -1 : 1),
-  };
+  const simplifyAt = toView(projectedPoint(0.5, 0.5));
+  const rotationBase = toView(projectedPoint(0.5, 1));
+  const inside = toView(projectedPoint(0.5, 0.9));
+  const offset = { x: rotationBase.x - inside.x, y: rotationBase.y - inside.y };
+  const distance = Math.hypot(offset.x, offset.y) || 1;
+  const rotateAt = { x: rotationBase.x + offset.x / distance * 36, y: rotationBase.y + offset.y / distance * 36 };
 
   return (
     <svg
       ref={svgRef}
-      className="stretch-rect-handles"
+      className={`stretch-rect-handles ${isDragging ? 'is-dragging' : ''}`}
       width={viewWidth}
       height={viewHeight}
       onPointerMove={handlePointerMove}
@@ -280,7 +273,20 @@ export function StretchRectHandles({
         d={outlinePath}
         onPointerDown={(e) => {
           const point = toDoc(e.clientX, e.clientY);
-          if (point) startDrag({ kind: 'move', last: point })(e);
+          doubleTap.onPointerDown(e);
+          if (point) startDrag({ kind: 'move', last: point, started: false })(e);
+        }}
+        onPointerMove={doubleTap.onPointerMove}
+        onPointerUp={doubleTap.onPointerUp}
+        onPointerCancel={doubleTap.onPointerCancel}
+        role="button"
+        tabIndex={0}
+        aria-label="Stretch properties"
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onOpenProperties();
+          }
         }}
       />
       <g className="rect-grid" aria-hidden="true">
@@ -301,7 +307,7 @@ export function StretchRectHandles({
         fill="none"
       />
 
-      {!vertexMode && edgeHandles.map((h) => {
+      {control === 'transform' && edgeHandles.map((h) => {
         const a = toView(h.anchor);
         const p = toView(h.at);
         return (
@@ -313,7 +319,7 @@ export function StretchRectHandles({
         );
       })}
 
-      {!vertexMode && edgeHandles.map((h) => {
+      {control === 'transform' && edgeHandles.map((h) => {
         const p = toView(h.at);
         return (
           <circle
@@ -364,11 +370,16 @@ export function StretchRectHandles({
           );
         }
 
+        const next = toView(projectedPoint(u + (u === 0 || u === 1 ? 0 : 0.01), v + (u === 0 || u === 1 ? 0.01 : 0)));
+        const angle = Math.atan2(next.y - p.y, next.x - p.x) * 180 / Math.PI;
         return (
-          <rect
+          <CanvasHandle
             key={id}
             className={`rect-handle ${isApex ? 'apex' : ''}`}
-            x={p.x - 5} y={p.y - 5} width={10} height={10}
+            x={p.x} y={p.y}
+            shape={cornerIndex !== undefined ? 'corner' : 'edge'}
+            angle={angle}
+            label={cornerIndex !== undefined ? 'Drag to shape this corner' : 'Drag to resize this edge'}
             onPointerDown={(e) => {
               if (cornerIndex !== undefined) {
                 startDrag({ kind: 'warp', corner: cornerIndex })(e);
@@ -384,106 +395,23 @@ export function StretchRectHandles({
         );
       })}
 
-      <line
-        className="bend-depth-stem"
-        x1={depthBaseView.x} y1={depthBaseView.y}
-        x2={depthView.x} y2={depthView.y}
-      />
-      <g
-        className={`bend-depth ${spec.bend !== 0 ? 'active' : ''}`}
-        transform={`translate(${depthView.x}, ${depthView.y})`}
-        onPointerDown={(e) => {
-          const point = toDoc(e.clientX, e.clientY);
-          if (point) startDrag({ kind: 'bend', start: point, initial: spec.bend })(e);
-        }}
-      >
-        <title>Drag along the band to adjust 3D depth</title>
-        <circle r={12} />
-        <path d="M-6,2 C-3,-4 3,-4 6,2 M-5,5 C-2,1 2,1 5,5" />
-      </g>
-
-      <line className="rect-rotate-stem" x1={badgeAt.x} y1={badgeAt.y} x2={rotateAt.x} y2={rotateAt.y} />
-      <g
-        className="rect-rotate"
-        transform={`translate(${rotateAt.x}, ${rotateAt.y})`}
-        onPointerDown={startDrag({ kind: 'rotate' })}
-      >
-        <circle r={11} />
-        <path d="M-4.5,-1.5 A4.5,4.5 0 1 1 -1.5,4.3" />
-        <path d="M-7,-3.4 L-4.5,-1.2 L-2.1,-3.9" />
-      </g>
-
-      <g className="rect-badge" transform={`translate(${badgeAt.x + 14}, ${badgeAt.y - 40})`}>
-        <rect x={0} y={0} width={92} height={38} rx={8} />
-        <text x={11} y={16}>W: {Math.round(Math.abs(spec.width))} px</text>
-        <text x={11} y={30}>H: {Math.round(Math.abs(spec.length))} px</text>
-      </g>
-
-      <g
-        className={`rect-mode ${curvedMode ? 'on' : ''}`}
-        transform={`translate(${unlockAt.x - 36}, ${unlockAt.y + 20})`}
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          onChange({
-            warpMode: curvedMode ? 'straight' : 'curved',
-            // Enter either shape mode on a flat 2D surface. The dedicated
-            // canvas depth grip can still add the cylindrical effect directly.
-            bend: 0,
-          }, false);
-        }}
-      >
-        <title>{curvedMode
-          ? 'Curved shape — click for straight 2D skew'
-          : 'Straight 2D skew — click for curved wave controls'}</title>
-        <rect x={0} y={0} width={28} height={28} rx={7} />
-        <g transform="translate(6, 7)" className="rect-mode-glyph">
-          {curvedMode
-            ? <path d="M0,11 C4,11 4,3 8,3 C12,3 12,11 16,11" />
-            : <path d="M0,11 L16,3" />}
-        </g>
-      </g>
-
-      <g
-        className={`rect-mode ${vertexMode ? 'on' : ''}`}
-        transform={`translate(${unlockAt.x - 36}, ${unlockAt.y + 54})`}
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          setVertexMode((on) => !on);
-        }}
-      >
-        <title>{vertexMode ? 'Done editing edges' : 'Remove or restore edges'}</title>
-        <rect x={0} y={0} width={28} height={28} rx={7} />
-        <g transform="translate(6, 6)" className="rect-mode-glyph">
-          <path d="M1,14 L8,2 L15,14 Z" />
-        </g>
-      </g>
-
-      {hasSubject && (
-        <SubjectOnlyToggle
-          on={Boolean(spec.subjectOnly)}
-          x={unlockAt.x - 36}
-          y={unlockAt.y + 88}
-          onToggle={() => onChange({ subjectOnly: !spec.subjectOnly }, false)}
-        />
+      {control === 'colors' && (
+        <ColorSimplifyGrip spec={spec} at={simplifyAt} onChange={onChange} onBeginDrag={onBeginDrag} />
       )}
 
-      <g
-        className="rect-unlock"
-        transform={`translate(${unlockAt.x - 36}, ${unlockAt.y - 14})`}
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          onUnlock();
-        }}
-      >
-        <rect x={0} y={0} width={28} height={28} rx={7} />
-        <g transform="translate(7, 7)" className="rect-unlock-glyph">
-          <rect x={1.5} y={6} width={11} height={7.5} rx={1.5} />
-          <path d="M4 6V4a3 3 0 0 1 5.8-1" />
-        </g>
-      </g>
+      {control === 'transform' && (
+        <CanvasHandle
+          className="rect-rotate"
+          x={rotateAt.x} y={rotateAt.y}
+          shape="rotate" label="Drag to rotate"
+          onPointerDown={(event) => {
+            const point = toDoc(event.clientX, event.clientY);
+            if (!point) return;
+            const centre = rectCenter(spec);
+            startDrag({ kind: 'rotate', angle: Math.atan2(point.y - centre.y, point.x - centre.x), rotation: spec.rotation })(event);
+          }}
+        />
+      )}
     </svg>
   );
 }

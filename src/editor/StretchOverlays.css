@@ -1,483 +1,127 @@
 .stretch-path-editor,
 .stretch-rect-handles,
 .stretch-preview {
+  --canvas-accent: #8b3dff;
   position: absolute;
   top: 0;
   left: 0;
   overflow: visible;
-  /* Only handles take pointer events; bare canvas still belongs to the tool. */
   pointer-events: none;
 }
 
-/* --- Sample path --- */
-
-.path-curve-shadow {
-  fill: none;
-  stroke: rgba(0, 0, 0, 0.55);
-  stroke-width: 4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.path-curve {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 1.75;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.path-point {
-  fill: #fff;
-  stroke: var(--accent);
-  stroke-width: 1.75;
-  pointer-events: auto;
-  cursor: grab;
-}
-
-.path-point:active {
-  cursor: grabbing;
-}
-
-.path-point:hover {
-  fill: var(--accent);
-  stroke: #fff;
-}
-
-.path-midpoint {
-  fill: rgba(10, 10, 15, 0.5);
-  stroke: #fff;
-  stroke-width: 1.5;
-  pointer-events: auto;
-  cursor: ns-resize;
-  transition: fill 0.12s;
-}
-
-.path-midpoint.hover {
-  fill: var(--accent);
-}
-
-/* --- Lock / unlock buttons --- */
-
-.path-lock,
-.rect-unlock {
-  pointer-events: auto;
-  cursor: pointer;
-}
-
-.path-lock > rect,
-.rect-unlock > rect {
-  fill: rgba(10, 10, 15, 0.88);
-  stroke: var(--border-hover);
-  stroke-width: 1;
-}
-
-.path-lock:hover > rect {
-  fill: var(--accent);
-  stroke: #fff;
-}
-
-.rect-unlock:hover > rect {
-  fill: var(--accent-purple);
-  stroke: #fff;
-}
-
-.path-lock-glyph,
-.rect-unlock-glyph {
-  fill: none;
-  stroke: #fff;
-  stroke-width: 1.5;
-  stroke-linecap: round;
-}
-
-/* --- Locked rectangle --- */
-
+/* The selection stays quiet until a handle is being dragged. */
 .rect-outline {
-  fill: rgba(255, 255, 255, 0.06);
-  stroke: var(--accent);
+  fill: transparent;
+  stroke: var(--canvas-accent);
   stroke-width: 1.5;
   fill-rule: nonzero;
-  /* The filled body is the move target. */
-  pointer-events: auto;
-  cursor: move;
-}
-
-.rect-outline:hover {
-  fill: rgba(255, 255, 255, 0.12);
-}
-
-/* A distorted band uses the secondary gray so the two states remain distinct. */
-.rect-outline.warped {
-  stroke: var(--accent-purple);
-  stroke-dasharray: 6 3;
-}
-
-/* Lines through the band's thirds, following every bend. */
-.rect-grid {
-  fill: none;
-  stroke: rgba(255, 255, 255, 0.75);
-  stroke-width: 1;
-  stroke-dasharray: none;
-  pointer-events: none;
-}
-
-.rect-rotate-stem {
-  stroke: var(--accent);
-  stroke-width: 1.25;
-  stroke-dasharray: 3 3;
-}
-
-.rect-rotate {
   pointer-events: auto;
   cursor: grab;
 }
 
-.rect-rotate:active {
-  cursor: grabbing;
-}
-
-.rect-rotate > circle {
-  fill: rgba(10, 10, 15, 0.9);
-  stroke: var(--accent);
-  stroke-width: 1.75;
-}
-
-.rect-rotate:hover > circle {
-  fill: var(--accent);
-  stroke: #fff;
-}
-
-.rect-rotate > path {
-  fill: none;
-  stroke: #fff;
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.rect-source-line {
-  stroke: rgba(255, 255, 255, 0.85);
-  stroke-width: 2;
-  stroke-linecap: round;
-}
-
-.rect-handle {
-  fill: #fff;
-  stroke: var(--accent);
-  stroke-width: 1.5;
-  pointer-events: auto;
-  cursor: grab;
-}
-
-.rect-handle:active {
-  cursor: grabbing;
-}
-
-.rect-handle:hover {
-  fill: var(--accent);
-  stroke: #fff;
-}
-
-/* Where a removed edge's corners meet; double-click restores the edge. */
-.rect-handle.apex {
-  transform-box: fill-box;
-  transform-origin: center;
-  transform: rotate(45deg);
-}
-
-/* Direct manipulation for the cylindrical 3D depth. */
-.bend-depth-stem {
-  stroke: rgba(255, 255, 255, 0.55);
-  stroke-width: 1.25;
-  stroke-dasharray: 3 3;
-  pointer-events: none;
-}
-
-.bend-depth {
-  pointer-events: auto;
-  cursor: ns-resize;
-}
-
-.bend-depth > circle {
-  fill: rgba(10, 10, 15, 0.9);
-  stroke: #fff;
-  stroke-width: 1.75;
-}
-
-.bend-depth.active > circle,
-.bend-depth:hover > circle {
-  fill: #f2f2f2;
-  stroke: #111;
-}
-
-.bend-depth > path {
-  fill: none;
-  stroke: #fff;
-  stroke-width: 1.35;
-  stroke-linecap: round;
-}
-
-.bend-depth.active > path,
-.bend-depth:hover > path {
-  stroke: #111;
-}
-
-.rect-badge > rect {
-  fill: rgba(10, 10, 15, 0.88);
-  stroke: var(--border-hover);
-  stroke-width: 1;
-}
-
-.rect-badge > text {
-  fill: #fff;
-  font-family: 'Inter', system-ui, sans-serif;
-  font-size: 11.5px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-/* --- Live preview while dragging the band out --- */
-
-.stretch-preview .preview-rect {
-  fill: rgba(255, 255, 255, 0.12);
-  stroke: var(--accent);
-  stroke-width: 1.5;
-  stroke-dasharray: 5 4;
-}
-
-.stretch-preview .preview-line {
-  stroke: #fff;
-  stroke-width: 2.5;
-  stroke-linecap: round;
-}
-
-.stretch-preview circle {
-  fill: #fff;
-  stroke: #0a0a0a;
-  stroke-width: 1.5;
-}
-
-/* Grip that makes the pull gesture visible after the path is locked. */
-.preview-pull {
-  pointer-events: auto;
-  cursor: grab;
-}
-
-.preview-pull:active {
-  cursor: grabbing;
-}
-
-.preview-pull > circle {
-  fill: var(--accent);
-  stroke: #fff;
-  stroke-width: 2;
-}
-
-.preview-pull:hover > circle {
-  fill: var(--accent-purple);
-}
-
-.preview-pull > path {
-  fill: none;
-  stroke: #fff;
-  stroke-width: 1.75;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-/* --- Curved-edge controls --- */
-
-.edge-tangent {
-  stroke: rgba(255, 255, 255, 0.75);
-  stroke-width: 1;
-  stroke-dasharray: 3 2;
-}
-
-.edge-control {
-  fill: var(--accent-purple);
-  stroke: #fff;
-  stroke-width: 1.5;
-  pointer-events: auto;
-  cursor: grab;
-}
-
-.edge-control:active {
-  cursor: grabbing;
-}
-
-.edge-control:hover {
-  fill: #fff;
-  stroke: var(--accent-purple);
-}
-
-/* --- Straight / curved mode toggle --- */
-
-.rect-mode {
-  pointer-events: auto;
-  cursor: pointer;
-}
-
-.rect-mode > rect {
-  fill: rgba(10, 10, 15, 0.88);
-  stroke: var(--border-hover);
-  stroke-width: 1;
-}
-
-.rect-mode.on > rect {
-  fill: var(--accent-purple);
-  stroke: #fff;
-}
-
-.rect-mode:hover > rect {
-  stroke: #fff;
-}
-
-.rect-mode-glyph {
-  fill: none;
-  stroke: #fff;
-  stroke-width: 1.75;
-  stroke-linecap: round;
-}
-
-/* Edge edit mode: tap − on a side to remove it, + on the apex to restore it. */
-.vertex-toggle {
-  pointer-events: auto;
-  cursor: pointer;
-}
-
-.vertex-toggle-hit {
-  fill: transparent;
-}
-
-.vertex-toggle > circle:not(.vertex-toggle-hit) {
-  fill: rgba(10, 10, 15, 0.88);
-  stroke: #fff;
-  stroke-width: 1.5;
-}
-
-.vertex-toggle.restore > circle:not(.vertex-toggle-hit) {
-  fill: var(--accent);
-  stroke: rgba(10, 10, 15, 0.88);
-}
-
-.vertex-toggle > path {
-  fill: none;
-  stroke: #fff;
-  stroke-width: 2;
-  stroke-linecap: round;
-}
-
-.vertex-toggle.restore > path {
-  stroke: #111;
-}
-
-/* --- Arc (swept) bands --- */
-
-.stretch-arc-handles .rect-outline {
-  /* A closed ring is two loops; the hole must stay see-through. */
-  fill-rule: evenodd;
-}
-
-.arc-centreline {
-  fill: none;
-  stroke: rgba(255, 255, 255, 0.45);
-  stroke-width: 1;
-  stroke-dasharray: 5 4;
-  pointer-events: none;
-}
-
+.rect-outline:active { cursor: grabbing; }
+.stretch-arc-handles .rect-outline { fill-rule: evenodd; }
+.rect-grid,
+.arc-centreline,
 .arc-spoke {
-  stroke: rgba(255, 255, 255, 0.55);
+  fill: none;
+  stroke: var(--canvas-accent);
   stroke-width: 1;
-  stroke-dasharray: 4 3;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.is-dragging .rect-grid,
+.is-dragging .arc-centreline,
+.is-dragging .arc-spoke { opacity: .45; }
+.arc-centreline,
+.arc-spoke { stroke-dasharray: 4 4; }
+.rect-source-line { stroke: var(--canvas-accent); stroke-width: 1.5; pointer-events: none; }
+
+/* White corner dots, edge pills, and detached circular transform buttons. */
+.canvas-handle {
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+}
+
+.canvas-handle:active { cursor: grabbing; }
+.canvas-handle-hit { fill: transparent; stroke: none; }
+.canvas-handle:active .canvas-handle-hit { fill: #8b3dff1a; }
+.canvas-handle-grip {
+  fill: #fff;
+  stroke: #adaab8;
+  stroke-width: 1;
+  filter: drop-shadow(0 1px 2px #0002);
+}
+
+.canvas-handle:hover .canvas-handle-grip { stroke: var(--canvas-accent); }
+.canvas-handle:active .canvas-handle-grip { fill: var(--canvas-accent); stroke: #fff; }
+.canvas-handle-glyph {
+  fill: none;
+  stroke: #24212b;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
   pointer-events: none;
 }
 
-.arc-radius-handle {
-  pointer-events: auto;
-  cursor: grab;
-}
+.canvas-handle:active .canvas-handle-glyph { stroke: #fff; }
+.arc-radius-handle.pinned .canvas-handle-grip { stroke-dasharray: 3 2; }
+.arc-sweep-handle.closed .canvas-handle-grip { stroke: var(--canvas-accent); }
 
-.arc-radius-handle > circle:first-of-type {
-  fill: rgba(10, 10, 15, 0.88);
-  stroke: #fff;
-  stroke-width: 1.5;
-}
+/* Sample-path editing uses the same round nodes and touch targets. */
+.path-curve-shadow { fill: none; stroke: #ffffffb3; stroke-width: 3.5; }
+.path-curve { fill: none; stroke: var(--canvas-accent); stroke-width: 1.5; }
+.path-curve,
+.path-curve-shadow { stroke-linecap: round; stroke-linejoin: round; }
+.path-midpoint .canvas-handle-grip { stroke: var(--canvas-accent); }
+.path-lock { pointer-events: auto; cursor: pointer; }
+.path-lock > circle:not(.canvas-handle-hit) { fill: #fff; stroke: #adaab8; stroke-width: 1; filter: drop-shadow(0 1px 2px #0002); }
+.path-lock-glyph { fill: none; stroke: #24212b; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.path-lock:hover > circle:not(.canvas-handle-hit) { stroke: var(--canvas-accent); }
 
-.arc-radius-handle.pinned > circle:first-of-type {
-  stroke-dasharray: 3 2;
-}
-
-.arc-radius-dot {
-  fill: #fff;
-}
-
-.arc-sweep-handle {
-  fill: var(--accent);
-  stroke: rgba(10, 10, 15, 0.9);
-  stroke-width: 2;
-  pointer-events: auto;
-  cursor: grab;
-}
-
-.arc-sweep-handle.closed {
-  fill: rgba(10, 10, 15, 0.88);
-  stroke: #fff;
-  stroke-dasharray: 3 2;
-}
-
-.arc-radius-handle:active,
-.arc-sweep-handle:active {
-  cursor: grabbing;
-}
-
-.stretch-band-mode {
-  position: absolute;
-  z-index: 8;
-  top: 10px;
-  left: 10px;
-  display: flex;
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid var(--border-hover);
-  border-radius: 9px;
-  background: rgba(10, 10, 15, 0.88);
-  pointer-events: auto;
-}
-
-.stretch-band-mode button {
-  min-height: 30px;
-  padding: 4px 10px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  font: 600 11px/1 'Inter', system-ui, sans-serif;
-  cursor: pointer;
-}
-
-.stretch-band-mode button.active {
-  background: var(--accent);
-  color: #0a0a0f;
-}
-
+/* Extra controls appear only in their chosen editing mode. */
+.edge-tangent { stroke: #8b3dff99; stroke-width: 1; stroke-dasharray: 3 3; pointer-events: none; }
+.edge-control,
+.arc-knot,
 .arc-edge-insert {
-  cursor: copy;
-}
-
-.arc-knot {
   fill: #fff;
-  stroke: rgba(10, 10, 15, 0.9);
-  stroke-width: 2;
+  stroke: var(--canvas-accent);
+  stroke-width: 1.5;
   pointer-events: auto;
   cursor: grab;
 }
 
-.arc-knot:hover {
-  fill: var(--accent);
-  stroke: #fff;
-}
+.edge-control:hover,
+.arc-knot:hover,
+.arc-edge-insert:hover { fill: #efe5ff; }
+.edge-control:active,
+.arc-knot:active,
+.arc-edge-insert:active { cursor: grabbing; }
+.arc-edge-insert { stroke-dasharray: 2 1; }
 
-.arc-knot:active {
-  cursor: grabbing;
-}
+.vertex-toggle { pointer-events: auto; cursor: pointer; }
+.vertex-toggle-hit { fill: transparent; }
+.vertex-toggle > circle:not(.vertex-toggle-hit) { fill: #fff; stroke: #adaab8; stroke-width: 1; }
+.vertex-toggle > path { fill: none; stroke: #7731d8; stroke-width: 1.8; stroke-linecap: round; }
+.vertex-toggle:hover > circle:not(.vertex-toggle-hit) { fill: #efe5ff; stroke: var(--canvas-accent); }
+
+.color-simplify-stem { stroke: #8b3dff99; stroke-width: 1; stroke-dasharray: 3 3; pointer-events: none; }
+.color-simplify { pointer-events: auto; cursor: grab; touch-action: none; }
+.color-simplify-hit { fill: transparent; }
+.color-simplify > circle:not(.color-simplify-hit) { fill: #fff; stroke: #adaab8; stroke-width: 1; filter: drop-shadow(0 1px 2px #0002); }
+.color-simplify.active > circle:not(.color-simplify-hit),
+.color-simplify:hover > circle:not(.color-simplify-hit) { fill: #efe5ff; stroke: var(--canvas-accent); }
+.color-simplify > path { fill: none; stroke: #24212b; stroke-width: 1.6; stroke-linecap: round; }
+.color-simplify.active > path { stroke: #7731d8; }
+.color-simplify.soft > path { stroke-dasharray: 2 1.5; }
+
+/* Preview while pulling a new band out from its path. */
+.stretch-preview .preview-rect { fill: #8b3dff0d; stroke: var(--canvas-accent); stroke-width: 1.5; }
+.stretch-preview .preview-line { stroke: var(--canvas-accent); stroke-width: 1.5; stroke-linecap: round; }
+.preview-pull { pointer-events: auto; cursor: grab; }
+.preview-pull:active { cursor: grabbing; }
+.preview-pull > circle { fill: #fff; stroke: #adaab8; stroke-width: 1; }
+.preview-pull > path { fill: none; stroke: #24212b; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.preview-pull:hover > circle { fill: #efe5ff; stroke: var(--canvas-accent); }

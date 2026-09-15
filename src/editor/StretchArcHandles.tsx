@@ -1,12 +1,14 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { StretchSpec, Point } from '../types/stretch';
 import type { ArcBand, ArcEdge, EdgeKnot } from '../types/arc-band';
 import {
   arcCentre, arcEdgePoint, arcOutline, arcPoint, clampRadius, edgeInsertionPoints, edgeKnotAt,
   edgeOffset, isClosedArc, snapSweep, sweepToward,
 } from '../types/arc-band';
-import { toDegrees } from '../utils/math-utils';
-import { SubjectOnlyToggle } from './SubjectOnlyToggle';
+import { useDoubleTap } from './useDoubleTap';
+import { CanvasHandle } from './CanvasHandle';
+import type { StretchControl } from '../components/StretchTools';
+import { ColorSimplifyGrip } from './ColorSimplifyGrip';
 
 interface StretchArcHandlesProps {
   spec: StretchSpec;
@@ -16,10 +18,8 @@ interface StretchArcHandlesProps {
   viewHeight: number;
   onChange: (patch: Partial<StretchSpec>, transient: boolean) => void;
   onBeginDrag: () => void;
-  /** Reopen the path for editing. */
-  onUnlock: () => void;
-  /** Whether the band's source has a lifted subject it could read from alone. */
-  hasSubject: boolean;
+  onOpenProperties: () => void;
+  control: StretchControl;
 }
 
 type Drag =
@@ -27,7 +27,7 @@ type Drag =
   | { kind: 'width' }
   | { kind: 'sweep' }
   | { kind: 'knot'; edge: ArcEdge; index: number }
-  | { kind: 'move'; last: Point };
+  | { kind: 'move'; last: Point; started: boolean };
 
 /** Keeps a handle this far inside the view when its true spot is off-canvas. */
 const EDGE_INSET = 18;
@@ -63,11 +63,13 @@ export function StretchArcHandles({
   viewHeight,
   onChange,
   onBeginDrag,
-  onUnlock,
-  hasSubject,
+  onOpenProperties,
+  control,
 }: StretchArcHandlesProps) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const doubleTap = useDoubleTap(onOpenProperties);
   const dragging = useRef<Drag | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const scale = viewWidth / docWidth;
   const toView = (p: Point) => ({ x: p.x * scale, y: p.y * scale });
 
@@ -83,7 +85,7 @@ export function StretchArcHandles({
     e.stopPropagation();
     e.preventDefault();
     dragging.current = drag;
-    onBeginDrag();
+    if (drag.kind !== 'move') { onBeginDrag(); setIsDragging(true); }
     (e.target as Element).setPointerCapture(e.pointerId);
   }, [onBeginDrag]);
 
@@ -96,6 +98,13 @@ export function StretchArcHandles({
     const width = Math.abs(spec.width);
 
     if (drag.kind === 'move') {
+      // A tap opens no undo entry and small touch jitter must not move the band.
+      if (!drag.started) {
+        if (Math.hypot(point.x - drag.last.x, point.y - drag.last.y) * scale <= 8) return;
+        onBeginDrag();
+        drag.started = true;
+        setIsDragging(true);
+      }
       onChange({
         arc: {
           ...arc,
@@ -142,7 +151,7 @@ export function StretchArcHandles({
       ? sweep
       : Math.sign(arc.sweep) * 1e-3;
     onChange({ arc: { ...arc, sweep: snapSweep(kept) } }, true);
-  }, [arc, spec.width, toDoc, onChange]);
+  }, [arc, spec.width, toDoc, onChange, scale, onBeginDrag]);
 
   /** Pull a new knot out of an edge at `t`, exactly on the current curve. */
   const insertKnot = useCallback((edge: ArcEdge, t: number) => (e: React.PointerEvent) => {
@@ -165,6 +174,7 @@ export function StretchArcHandles({
     if (!dragging.current) return;
     e.stopPropagation();
     dragging.current = null;
+    setIsDragging(false);
   }, []);
 
   const width = Math.abs(spec.width);
@@ -180,20 +190,13 @@ export function StretchArcHandles({
 
   const startInner = toView(arcEdgePoint(arc, width, 'inner', 0));
   const startOuter = toView(arcEdgePoint(arc, width, 'outer', 0));
-  // Controls stand off past the outer end of the start edge, clear of the
-  // centre handle however tight the curl.
-  const unlockAt = {
-    x: startOuter.x + Math.cos(arc.angle) * 34 - 14,
-    y: startOuter.y + Math.sin(arc.angle) * 34 - 14,
-  };
   const endMid = toView(arcPoint(arc, 0, 1));
   const widthAt = startOuter;
-  const degrees = Math.round(toDegrees(Math.abs(arc.sweep)));
 
   return (
     <svg
       ref={svgRef}
-      className="stretch-rect-handles stretch-arc-handles"
+      className={`stretch-rect-handles stretch-arc-handles ${isDragging ? 'is-dragging' : ''}`}
       width={viewWidth}
       height={viewHeight}
       onPointerMove={handlePointerMove}
@@ -206,7 +209,20 @@ export function StretchArcHandles({
         fillRule="evenodd"
         onPointerDown={(e) => {
           const point = toDoc(e.clientX, e.clientY);
-          if (point) startDrag({ kind: 'move', last: point })(e);
+          doubleTap.onPointerDown(e);
+          if (point) startDrag({ kind: 'move', last: point, started: false })(e);
+        }}
+        onPointerMove={doubleTap.onPointerMove}
+        onPointerUp={doubleTap.onPointerUp}
+        onPointerCancel={doubleTap.onPointerCancel}
+        role="button"
+        tabIndex={0}
+        aria-label="Stretch properties"
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onOpenProperties();
+          }
         }}
       />
       <path className="arc-centreline" d={pathData(
@@ -222,20 +238,18 @@ export function StretchArcHandles({
         <line className="arc-spoke" x1={centreView.x} y1={centreView.y} x2={endMid.x} y2={endMid.y} />
       )}
 
-      <g
+      <CanvasHandle
         className={`arc-radius-handle ${centreOffCanvas ? 'pinned' : ''}`}
-        transform={`translate(${pinned.x}, ${pinned.y})`}
+        x={pinned.x} y={pinned.y} shape="pivot"
+        label="Drag toward the band to curl it tighter"
         onPointerDown={(e) => {
           const point = toDoc(e.clientX, e.clientY);
           if (point) startDrag({ kind: 'radius', start: point, radius: arc.radius })(e);
         }}
-      >
-        <title>Radius — drag toward the band to curl it tighter</title>
-        <circle r={9} />
-        <circle className="arc-radius-dot" r={2.5} />
-      </g>
+      />
 
-      {EDGES.flatMap((edge) => edgeInsertionPoints(arc, edge).map((t) => {
+
+      {control === 'edges' && EDGES.flatMap((edge) => edgeInsertionPoints(arc, edge).map((t) => {
         const p = toView(arcEdgePoint(arc, width, edge, t));
         return (
           <rect
@@ -250,7 +264,7 @@ export function StretchArcHandles({
         );
       }))}
 
-      {EDGES.flatMap((edge) => (arc[edge] ?? []).map((knot, index) => {
+      {control === 'edges' && EDGES.flatMap((edge) => (arc[edge] ?? []).map((knot, index) => {
         const p = toView(arcEdgePoint(arc, width, edge, knot.t));
         return (
           <circle
@@ -265,55 +279,24 @@ export function StretchArcHandles({
         );
       }))}
 
-      <rect
+      <CanvasHandle
         className="rect-handle arc-width-handle"
-        x={widthAt.x - 6} y={widthAt.y - 6} width={12} height={12}
+        x={widthAt.x} y={widthAt.y} shape="edge"
+        angle={arc.angle * 180 / Math.PI + 90}
         onPointerDown={startDrag({ kind: 'width' })}
-      >
-        <title>Width — drag across the band</title>
-      </rect>
+        label="Drag across the band to adjust width"
+      />
 
-      <circle
+      <CanvasHandle
         className={`arc-sweep-handle ${closed ? 'closed' : ''}`}
-        cx={endMid.x}
-        cy={endMid.y}
-        r={closed ? 11 : 8}
+        x={endMid.x} y={endMid.y}
         onPointerDown={startDrag({ kind: 'sweep' })}
-      >
-        <title>{closed ? 'Ring — drag back to open it' : 'Sweep — drag round to the start to close a ring'}</title>
-      </circle>
+        label={closed ? 'Drag back to open the ring' : 'Drag around to the start to close a ring'}
+      />
 
-      <g className="rect-badge" transform={`translate(${unlockAt.x + 36}, ${unlockAt.y - 12})`}>
-        <rect x={0} y={0} width={104} height={52} rx={8} />
-        <text x={11} y={16}>R: {Math.round(arc.radius)} px</text>
-        <text x={11} y={30}>W: {Math.round(width)} px</text>
-        <text x={11} y={44}>{degrees >= 360 ? 'Ring 360°' : `${degrees}°`}</text>
-      </g>
-
-      {hasSubject && (
-        <SubjectOnlyToggle
-          on={Boolean(spec.subjectOnly)}
-          x={unlockAt.x}
-          y={unlockAt.y + 34}
-          onToggle={() => onChange({ subjectOnly: !spec.subjectOnly }, false)}
-        />
+      {control === 'colors' && (
+        <ColorSimplifyGrip spec={spec} at={toView(arcPoint(arc, 0, 0.5))} onChange={onChange} onBeginDrag={onBeginDrag} />
       )}
-
-      <g
-        className="rect-unlock"
-        transform={`translate(${unlockAt.x}, ${unlockAt.y})`}
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          onUnlock();
-        }}
-      >
-        <rect x={0} y={0} width={28} height={28} rx={7} />
-        <g transform="translate(7, 7)" className="rect-unlock-glyph">
-          <rect x={1.5} y={6} width={11} height={7.5} rx={1.5} />
-          <path d="M4 6V4a3 3 0 0 1 5.8-1" />
-        </g>
-      </g>
     </svg>
   );
 }

@@ -236,6 +236,39 @@ function stretch(value: unknown): StretchSpec | undefined {
     ...(edges(value.edges) ? { edges: edges(value.edges) } : {}),
     ...(value.removedEdge !== undefined ? { removedEdge: value.removedEdge } : {}),
     ...(value.subjectOnly === true ? { subjectOnly: true } : {}),
+    ...(typeof value.gridTexture === 'number' && Number.isFinite(value.gridTexture) && value.gridTexture > 0
+      ? { gridTexture: Math.min(1, value.gridTexture) }
+      : {}),
+    ...(typeof value.gridSize === 'number' && Number.isFinite(value.gridSize)
+      ? { gridSize: Math.max(1, Math.min(256, Math.round(value.gridSize))) }
+      : {}),
+    ...(value.gridStyle === 'lines' ? { gridStyle: 'lines' as const } : {}),
+    ...(typeof value.gridColor === 'string' && /^#[0-9a-f]{6}$/i.test(value.gridColor)
+      ? { gridColor: value.gridColor }
+      : {}),
+    ...(typeof value.edgeBlend === 'number' && Number.isFinite(value.edgeBlend) && value.edgeBlend > 0
+      ? { edgeBlend: Math.min(1, value.edgeBlend) }
+      : {}),
+    ...(typeof value.colorBlend === 'number' && Number.isFinite(value.colorBlend) && value.colorBlend > 0
+      ? { colorBlend: Math.min(value.colorBlend, 256) }
+      : {}),
+    ...(value.style === 'pixel' || value.style === 'motion' ? { style: value.style } : {}),
+    ...(['motionScatter', 'motionSoftness', 'motionFadeIn'] as const).reduce<Partial<StretchSpec>>((fields, key) => (
+      typeof value[key] === 'number' && Number.isFinite(value[key])
+        ? { ...fields, [key]: Math.max(0, Math.min(1, value[key] as number)) }
+        : fields
+    ), {}),
+    ...(value.pixelSize !== undefined ? { pixelSize: positiveInteger(value.pixelSize, 'stretch.pixelSize') } : {}),
+    ...(typeof value.pixelScatter === 'number' && Number.isFinite(value.pixelScatter)
+      ? { pixelScatter: Math.max(0, Math.min(1, value.pixelScatter)) }
+      : {}),
+    ...(typeof value.pixelStartScatter === 'number' && Number.isFinite(value.pixelStartScatter)
+      ? { pixelStartScatter: Math.max(0, Math.min(1, value.pixelStartScatter)) }
+      : {}),
+    ...(typeof value.pixelSoftness === 'number' && Number.isFinite(value.pixelSoftness)
+      ? { pixelSoftness: Math.max(0, Math.min(1, value.pixelSoftness)) }
+      : {}),
+    ...(value.colorCount !== undefined ? { colorCount: positiveInteger(value.colorCount, 'stretch.colorCount') } : {}),
     ...(value.arc !== undefined ? { arc: arc(value.arc) } : {}),
   };
 }

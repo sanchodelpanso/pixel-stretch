@@ -1,18 +1,20 @@
 :root {
   color-scheme: dark;
   --bg-primary: #111111;
-  --bg-panel: rgba(20, 20, 20, 0.96);
+  --bg-panel: #191919;
+  --bg-stage: #242424;
+  --surface-toolbar: #303030;
   --surface-raised: #242424;
   --surface-selected: #f2f2f2;
   --accent: #f2f2f2;
   --accent-purple: #b8b8b8;
   --accent-pink: #8c8c8c;
   --text-primary: #ffffff;
-  --text-secondary: rgba(255, 255, 255, 0.6);
-  --text-muted: rgba(255, 255, 255, 0.35);
+  --text-secondary: #c4c4c4;
+  --text-muted: #a3a3a3;
   --border: rgba(255, 255, 255, 0.08);
   --border-hover: rgba(255, 255, 255, 0.15);
-  --glass-bg: rgba(255, 255, 255, 0.04);
+  --glass-bg: rgba(255, 255, 255, 0.06);
   --glass-blur: 20px;
 }
 
@@ -76,4 +78,9 @@ input:focus-visible,
 [role='button']:focus-visible {
   outline: 2px solid #fff;
   outline-offset: 2px;
+}
+
+.ui-icon {
+  display: block;
+  flex: 0 0 auto;
 }

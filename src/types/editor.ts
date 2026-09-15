@@ -1,5 +1,5 @@
 /** Tools available in the editor's left rail. */
-export type EditorTool = 'move' | 'select-auto' | 'select-tap' | 'select-brush' | 'stretch';
+export type EditorTool = 'select-auto' | 'select-tap' | 'stretch';
 
 /** How a selection becomes a new layer. */
 export type ExtractMode = 'copy' | 'cut';

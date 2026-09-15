@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import type { Point } from '../types/stretch';
+import { CanvasHandle } from './CanvasHandle';
 import { pathToPolyline } from '../rendering/sample-path';
 
 interface StretchPathEditorProps {
@@ -118,10 +119,10 @@ export function StretchPathEditor({
       {points.slice(0, -1).map((p, i) => {
         const m = toView(midpoint(p, points[i + 1]));
         return (
-          <rect
+          <CanvasHandle
             key={`mid-${i}`}
             className={`path-midpoint ${hoverMid === i ? 'hover' : ''}`}
-            x={m.x - 5} y={m.y - 5} width={10} height={10}
+            x={m.x} y={m.y} label="Drag to add a curve point"
             onPointerDown={startGrab({ kind: 'midpoint', index: i })}
             onPointerEnter={() => setHoverMid(i)}
             onPointerLeave={() => setHoverMid(null)}
@@ -130,10 +131,10 @@ export function StretchPathEditor({
       })}
 
       {viewPoints.map((p, i) => (
-        <rect
+        <CanvasHandle
           key={`pt-${i}`}
           className="path-point"
-          x={p.x - 6} y={p.y - 6} width={12} height={12}
+          x={p.x} y={p.y} label="Drag to shape the sample path"
           onPointerDown={startGrab({ kind: 'point', index: i })}
           onDoubleClick={removePoint(i)}
         />
@@ -142,18 +143,19 @@ export function StretchPathEditor({
       {/* Lock the shape and move on to pulling the band out. */}
       <g
         className="path-lock"
-        transform={`translate(${last.x + 16}, ${last.y - 14})`}
+        transform={`translate(${last.x + 34}, ${last.y})`}
+        role="button" tabIndex={0} aria-label="Finish sample path"
+        onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onLock(); } }}
         onPointerDown={(e) => {
           e.stopPropagation();
           e.preventDefault();
           onLock();
         }}
       >
-        <rect x={0} y={0} width={28} height={28} rx={7} />
-        <g transform="translate(7, 7)" className="path-lock-glyph">
-          <rect x={1.5} y={6} width={11} height={7.5} rx={1.5} />
-          <path d="M4 6V4a3 3 0 0 1 6 0v2" />
-        </g>
+        <title>Finish sample path</title>
+        <circle className="canvas-handle-hit" r={22} />
+        <circle r={15} />
+        <path className="path-lock-glyph" d="m-6 0 4 4L7-5" />
       </g>
     </svg>
   );

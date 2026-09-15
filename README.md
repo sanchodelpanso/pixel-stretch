@@ -15,9 +15,8 @@ Open the printed localhost URL and choose a JPEG, PNG, WebP, or HEIC photo. The 
 
 - **Auto:** selects the main foreground subject using [BiRefNet Lite 512](https://huggingface.co/studioludens/birefnet-lite-512). On the supplied Pisa example this includes the tower and cathedral, matching `piza_selected.png`.
 - **Tap:** click to include an object; Alt-click to exclude a region. Uses [SlimSAM](https://huggingface.co/Xenova/slimsam-77-uniform).
-- **Brush:** paint approximately over an object to provide a bounding-box prompt to SlimSAM. Hold Alt to erase brush strokes.
 - **Copy / Cut to new layer:** extracts the selection. Hide the Background layer before exporting a transparent cutout.
-- **Stretch:** draw a sample path, shape and lock it, then drag to pull out a band.
+- **Stretch (default):** draw a sample path, shape and lock it, then drag to pull out a band.
   Switch to **Arc** before dragging to sweep the band round a pivot instead; curl back
   to the start to close a ring, then use the centre, square and round handles to set
   radius, width and sweep. Drag a hollow ◇ marker on the inner or outer edge to add a
@@ -28,7 +27,7 @@ into the stretch while retaining sharp interior detail. Preview and PNG export
 share this blending, including for reopened projects. The original layer pixels
 remain in the project, so saving and reopening never compounds the feather.
 
-Click an active selection tool again to restart or retry it. Escape clears the selection and returns to Move. Undo/redo supports Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z.
+Click an active selection tool again to restart or retry it. Escape clears the selection and returns to Stretch. On mobile, double-tap the stretch itself to open its properties; ordinary taps and drags leave the sheet closed. The Layers button opens layers explicitly. Undo/redo supports Cmd/Ctrl+Z and Cmd/Ctrl+Shift+Z.
 
 ## Selection implementation
 
@@ -49,7 +48,7 @@ npm run build
 npm run lint
 ```
 
-The browser suite checks HEIC orientation/resolution, lazy model loading, Auto selection, transparent full-resolution PNG export, undo/redo, Tap, Brush, and stale-result handling. It writes a cutout and screenshot into `artifacts/segmentation/`.
+The browser suite checks HEIC orientation/resolution, lazy model loading, Auto selection, transparent full-resolution PNG export, undo/redo, Tap, mobile stretch gestures, and stale-result handling. It writes a cutout and screenshot into `artifacts/segmentation/`.
 
 The production smoke test runs with WebGPU disabled (start `npm run preview -- --host 127.0.0.1 --port 4173` first):
 

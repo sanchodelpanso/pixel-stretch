@@ -8,6 +8,16 @@ import { bandSurface } from './surface';
 import type { SurfaceMap } from './surface';
 import { samplePath } from './sample-path';
 import { clamp } from '../utils/math-utils';
+import { simplifyRow } from './color-simplify';
+import {
+  DEFAULT_GRID_SIZE, gridEffect, gridLineWidth, parseHexColor, splitColorAndAlpha, type GridOptions,
+} from './grid-texture';
+import {
+  DEFAULT_MOTION_FADE_IN, DEFAULT_MOTION_SCATTER, DEFAULT_MOTION_SOFTNESS, motionStreakPixels,
+} from './motion-streaks';
+import {
+  DEFAULT_PIXEL_SCATTER, DEFAULT_PIXEL_SIZE, DEFAULT_PIXEL_SOFTNESS, DEFAULT_PIXEL_START_SCATTER, drawPixelStreaks,
+} from './pixel-streaks';
 
 export interface BandRender {
   /** Band pixels, sized to the rectangle's axis-aligned bounding box. */
@@ -35,6 +45,10 @@ const PIXEL_EPSILON = 1e-6;
  */
 const sourcePixelCache = new WeakMap<HTMLCanvasElement, ImageData>();
 
+export function layerPixels(source: Layer): ImageData {
+  return sourcePixels(source);
+}
+
 function sourcePixels(source: Layer): ImageData {
   let cached = sourcePixelCache.get(source.canvas);
   if (!cached) {
@@ -53,20 +67,31 @@ function createCanvas(width: number, height: number): HTMLCanvasElement {
   return canvas;
 }
 
-/**
- * Read `columns` pixels along the sample path into a 1px-tall strip — the row
- * of colours the band repeats. The path's whole arc always maps across the
- * whole strip, so widening the rectangle stretches the same pixels rather than
- * reaching for new ones. Sampling is bilinear so a curve doesn't stairstep.
- */
-function samplePathStrip(source: Layer, points: Point[], columns: number, subject: Layer | null): HTMLCanvasElement {
-  const strip = createCanvas(columns, 1);
-  const ctx = strip.getContext('2d')!;
-  const out = ctx.createImageData(columns, 1);
-  out.data.set(samplePathRow(source, points, columns, subject));
-  ctx.putImageData(out, 0, 0);
-  return strip;
+
+/** The pixel style's options for a band, with defaults filled in. */
+function pixelOptions(spec: StretchSpec) {
+  return {
+    blockSize: spec.pixelSize ?? DEFAULT_PIXEL_SIZE,
+    scatter: spec.pixelScatter ?? DEFAULT_PIXEL_SCATTER,
+    startScatter: spec.pixelStartScatter ?? DEFAULT_PIXEL_START_SCATTER,
+    softness: spec.pixelSoftness ?? DEFAULT_PIXEL_SOFTNESS,
+  };
 }
+
+/** The motion style's options for a band, with defaults filled in. */
+function motionOptions(spec: StretchSpec) {
+  return {
+    scatter: spec.motionScatter ?? DEFAULT_MOTION_SCATTER,
+    softness: spec.motionSoftness ?? DEFAULT_MOTION_SOFTNESS,
+    fadeIn: spec.motionFadeIn ?? DEFAULT_MOTION_FADE_IN,
+  };
+}
+
+/** Longest band, in pixels, the pixel and motion styles lay out for an arc before scaling it to fit. */
+const MAX_PIXEL_ARC_LENGTH = 4096;
+
+/** How many colours the sampled row is merged into, and whether their borders are softened. */
+type ColorOptions = Pick<StretchSpec, 'colorCount' | 'colorBlend'>;
 
 /** Bilinear read of one channel at a document point, treating out-of-bounds as empty. */
 function sampleChannel(layer: Layer, pixels: ImageData, point: Point, channel: number): number {
@@ -90,11 +115,20 @@ function sampleChannel(layer: Layer, pixels: ImageData, point: Point, channel: n
 }
 
 /**
- * The same row of colours as `samplePathStrip`, as raw RGBA. With a `subject`
+ * Read `columns` pixels along the sample path — the row of colours the band
+ * repeats, as raw RGBA. The path's whole arc always maps across the whole
+ * row, so widening the band stretches the same pixels rather than reaching
+ * for new ones; sampling is bilinear so a curve doesn't stairstep. With a `subject`
  * mask, each sample keeps only as much opacity as the subject has there, so
  * background the path crosses drops out of the band.
  */
-function samplePathRow(source: Layer, points: Point[], columns: number, subject: Layer | null): Uint8ClampedArray {
+function samplePathRow(
+  source: Layer,
+  points: Point[],
+  columns: number,
+  subject: Layer | null,
+  colors: ColorOptions = {},
+): Uint8ClampedArray {
   const pixels = sourcePixels(source);
   const mask = subject ? sourcePixels(subject) : null;
   const along = samplePath(points, columns);
@@ -105,7 +139,9 @@ function samplePathRow(source: Layer, points: Point[], columns: number, subject:
     if (subject && mask) out[i * 4 + 3] *= sampleChannel(subject, mask, along[i], 3) / 255;
   }
 
-  return out;
+  return colors.colorCount
+    ? simplifyRow(out, columns, colors.colorCount, colors.colorBlend ?? 0)
+    : out;
 }
 
 /** How much of the path has to run over the subject before a new band reads only the subject. */
@@ -156,14 +192,34 @@ function renderArcBand(spec: StretchSpec, arc: ArcBand, source: Layer, subject: 
   if (outW < MIN_SIZE || outH < MIN_SIZE) return null;
 
   const columns = Math.max(2, Math.round(width));
-  const row = samplePathRow(source, spec.points, columns, subject);
+  const pixel = spec.style === 'pixel';
+  const motion = spec.style === 'motion';
+  // Pixel and motion streaks shape the colours themselves; merging them first would fight that.
+  const row = samplePathRow(source, spec.points, columns, subject, pixel || motion ? {} : spec);
   const soft = clamp(spec.edgeSoftness, 0, 0.49);
+
+  // Pixel and motion streaks are laid out once along the unrolled arc, then read back per output pixel.
+  let streaks: { data: Uint8ClampedArray; length: number } | null = null;
+  if (pixel || motion) {
+    const length = Math.max(1, Math.min(MAX_PIXEL_ARC_LENGTH, Math.round(Math.abs(arc.sweep) * arc.radius)));
+    if (motion) {
+      streaks = { data: motionStreakPixels(row, columns, length, motionOptions(spec)), length };
+    } else {
+      const unrolled = createCanvas(columns, length);
+      const uctx = unrolled.getContext('2d', { willReadFrequently: true })!;
+      drawPixelStreaks(uctx, row, columns, length, pixelOptions(spec));
+      streaks = { data: uctx.getImageData(0, 0, columns, length).data, length };
+    }
+  }
 
   const output = createCanvas(outW, outH);
   const octx = output.getContext('2d')!;
   const image = octx.createImageData(outW, outH);
   const data = image.data;
 
+  const grid = gridOptions(spec);
+  const gridColor = parseHexColor(grid.color);
+  const arcLength = Math.abs(arc.sweep) * arc.radius;
   const lookup = arcLookup(arc, width);
   for (let y = 0; y < outH; y++) {
     for (let x = 0; x < outW; x++) {
@@ -171,16 +227,34 @@ function renderArcBand(spec: StretchSpec, arc: ArcBand, source: Layer, subject: 
       if (!hit) continue;
 
       const position = hit.u * (columns - 1);
-      const left = Math.min(columns - 2, Math.floor(position));
-      const mix = position - left;
-      const alpha = hit.coverage * fadeAlong(hit.t, spec.fade, soft) * fadeAcross(hit.u, soft);
+      const effect = gridEffect(position, hit.t * arcLength, grid);
+      const alpha = hit.coverage * fadeAlong(hit.t, spec.fade, soft) * fadeAcross(hit.u, soft) * effect.keep;
       const i = (y * outW + x) * 4;
-      const a = left * 4;
-      const b = a + 4;
-      data[i] = row[a] + (row[b] - row[a]) * mix;
-      data[i + 1] = row[a + 1] + (row[b + 1] - row[a + 1]) * mix;
-      data[i + 2] = row[a + 2] + (row[b + 2] - row[a + 2]) * mix;
-      data[i + 3] = (row[a + 3] + (row[b + 3] - row[a + 3]) * mix) * alpha;
+      if (streaks) {
+        // Nearest cell, so the blocks stay crisp.
+        const column = Math.min(columns - 1, Math.round(position));
+        const along = Math.min(streaks.length - 1, Math.floor(hit.t * streaks.length));
+        const s = (along * columns + column) * 4;
+        data[i] = streaks.data[s];
+        data[i + 1] = streaks.data[s + 1];
+        data[i + 2] = streaks.data[s + 2];
+        data[i + 3] = streaks.data[s + 3] * alpha;
+      } else {
+        const left = Math.min(columns - 2, Math.floor(position));
+        const mix = position - left;
+        const a = left * 4;
+        const b = a + 4;
+        data[i] = row[a] + (row[b] - row[a]) * mix;
+        data[i + 1] = row[a + 1] + (row[b + 1] - row[a + 1]) * mix;
+        data[i + 2] = row[a + 2] + (row[b + 2] - row[a + 2]) * mix;
+        data[i + 3] = (row[a + 3] + (row[b + 3] - row[a + 3]) * mix) * alpha;
+      }
+      if (gridColor && effect.paint > 0) {
+        // Grid lines take the chosen colour, within the band's own opacity.
+        data[i] += (gridColor[0] - data[i]) * effect.paint;
+        data[i + 1] += (gridColor[1] - data[i + 1]) * effect.paint;
+        data[i + 2] += (gridColor[2] - data[i + 2]) * effect.paint;
+      }
     }
   }
 
@@ -350,17 +424,183 @@ export function renderStretchBand(spec: StretchSpec, source: Layer, subject: Lay
   const height = Math.round(Math.abs(spec.length));
   if (spec.points.length < 2 || width < MIN_SIZE || height < MIN_SIZE) return null;
 
+  const local = createCanvas(width, height);
+  const lctx = local.getContext('2d')!;
+  const pixel = spec.style === 'pixel';
+  /** Whether every sample on the path is fully opaque; pixel and motion streaks have gaps regardless. */
+  let solidRow = false;
+  if (pixel) {
+    // Pixel blocks already quantise the colours, so they read the raw samples.
+    drawPixelStreaks(lctx, samplePathRow(source, spec.points, width, mask), width, height, pixelOptions(spec));
+  } else if (spec.style === 'motion') {
+    const pixels = motionStreakPixels(samplePathRow(source, spec.points, width, mask), width, height, motionOptions(spec));
+    const image = lctx.createImageData(width, height);
+    image.data.set(pixels);
+    lctx.putImageData(image, 0, 0);
+  } else {
+    const row = samplePathRow(source, spec.points, width, mask, spec);
+    for (let i = 3; i < row.length; i += 4) if (row[i] < 255) solidRow = false;
+    // Every output row is the same row of colours; no resampling wanted.
+    lctx.imageSmoothingEnabled = false;
+    lctx.drawImage(stripFromRow(row, width), 0, 0, width, 1, 0, 0, width, height);
+  }
+  shapeAlpha(local, spec);
+  applyGridTexture(local, gridOptions(spec));
+  // Only a smooth band with solid samples and no fade, softening or grid is fully opaque.
+  const translucent = !solidRow || spec.fade > 0 || spec.edgeSoftness > 0 || (spec.gridTexture ?? 0) > 0;
+  // Keep crisp pixel blocks crisp; smooth streaks and feathered blocks want high-quality filtering.
+  return placeBandLocal(spec, local, pixel && !spec.pixelSoftness, translucent);
+}
+
+/** A 1px-tall canvas holding a sampled row of colours. */
+function stripFromRow(row: Uint8ClampedArray, columns: number): HTMLCanvasElement {
+  const strip = createCanvas(columns, 1);
+  const ctx = strip.getContext('2d')!;
+  const out = ctx.createImageData(columns, 1);
+  out.data.set(row);
+  ctx.putImageData(out, 0, 0);
+  return strip;
+}
+
+/** A band's grid texture settings, with defaults filled in. */
+function gridOptions(spec: StretchSpec): GridOptions {
+  return {
+    strength: spec.gridTexture ?? 0,
+    size: spec.gridSize ?? DEFAULT_GRID_SIZE,
+    style: spec.gridStyle ?? 'cut',
+    color: spec.gridColor,
+  };
+}
+
+/**
+ * Apply the grid texture to a band's upright local bitmap with repeating
+ * tiles, matching `gridEffect` pixel for pixel: cut lines are erased or
+ * painted over, staying within the band's own opacity; in grid-only mode the
+ * cells are erased entirely and the lines keep the stretch at `strength`.
+ */
+function applyGridTexture(local: HTMLCanvasElement, grid: GridOptions): void {
+  const strength = Math.max(0, Math.min(1, grid.strength));
+  if (strength <= 0) return;
+  const cell = Math.max(1, Math.round(grid.size));
+  const line = gridLineWidth(cell);
+  const ctx = local.getContext('2d')!;
+
+  const fillTile = (paint: (tctx: CanvasRenderingContext2D) => void, operation: GlobalCompositeOperation) => {
+    const tile = createCanvas(cell, cell);
+    paint(tile.getContext('2d')!);
+    const pattern = ctx.createPattern(tile, 'repeat');
+    if (!pattern) return;
+    ctx.globalCompositeOperation = operation;
+    ctx.fillStyle = pattern;
+    ctx.fillRect(0, 0, local.width, local.height);
+    ctx.globalCompositeOperation = 'source-over';
+  };
+  const lines = (tctx: CanvasRenderingContext2D) => {
+    tctx.fillRect(cell - line, 0, line, cell);
+    tctx.fillRect(0, cell - line, cell - line, line);
+  };
+
+  if (grid.style === 'lines') {
+    // Clear the cells, and thin the lines to the chosen strength.
+    fillTile((tctx) => {
+      tctx.fillStyle = '#000';
+      tctx.fillRect(0, 0, cell - line, cell - line);
+      tctx.globalAlpha = 1 - strength;
+      lines(tctx);
+    }, 'destination-out');
+    return;
+  }
+  fillTile((tctx) => {
+    tctx.globalAlpha = strength;
+    tctx.fillStyle = grid.color ?? '#000';
+    lines(tctx);
+  }, grid.color ? 'source-atop' : 'destination-out');
+}
+
+/**
+ * Draw a translucent texture across the cell mesh without seams. Cells overlap
+ * by a pixel to hide gaps, which is invisible for opaque pixels but doubles up
+ * translucent ones into a visible grid along every cell border. So colour and
+ * alpha are drawn as two opaque images, whose overlaps match exactly, and
+ * recombined afterwards.
+ */
+function drawPatchSeamless(
+  ctx: CanvasRenderingContext2D,
+  local: HTMLCanvasElement,
+  mesh: PatchMesh,
+  offsetX: number,
+  offsetY: number,
+  crisp: boolean,
+): void {
+  const { width, height } = local;
+  const source = local.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, width, height);
+  const { color, alpha } = splitColorAndAlpha(source.data, width, height);
+  const toCanvas = (data: Uint8ClampedArray) => {
+    const canvas = createCanvas(width, height);
+    const cctx = canvas.getContext('2d')!;
+    const image = cctx.createImageData(width, height);
+    image.data.set(data);
+    cctx.putImageData(image, 0, 0);
+    return canvas;
+  };
+
+  const out = ctx.canvas;
+  const coverage = createCanvas(out.width, out.height);
+  const actx = coverage.getContext('2d', { willReadFrequently: true })!;
+  if (crisp) actx.imageSmoothingEnabled = false;
+  else actx.imageSmoothingQuality = 'high';
+  drawPatch(ctx, toCanvas(color), mesh, offsetX, offsetY);
+  drawPatch(actx, toCanvas(alpha), mesh, offsetX, offsetY);
+
+  const colorPixels = ctx.getImageData(0, 0, out.width, out.height);
+  const alphaPixels = actx.getImageData(0, 0, out.width, out.height).data;
+  for (let i = 0; i < alphaPixels.length; i += 4) {
+    // Grey carries the texture's alpha; the grey image's own alpha is the mesh's edge coverage.
+    colorPixels.data[i + 3] = (alphaPixels[i] * alphaPixels[i + 3]) / 255;
+  }
+  ctx.putImageData(colorPixels, 0, 0);
+}
+
+/**
+ * Where a point of a straight band's upright local bitmap — `width × height`,
+ * the sample line along its top — lands in the document, through the same
+ * geometry `placeBandLocal` draws with.
+ */
+export function bandLocalToDoc(spec: StretchSpec, width: number, height: number): (x: number, y: number) => Point {
+  const distorted = hasCurvedEdges(spec) || isWarped(spec) || spec.bend !== 0 || spec.removedEdge !== undefined;
+  if (distorted) {
+    const at = bandSurface(spec);
+    return (x, y) => {
+      const uv = bendPoint(x / width, y / height, spec.bend);
+      return at(uv.x, uv.y);
+    };
+  }
+  const { along, out } = rectBasis(spec);
+  const sign = spec.length < 0 ? -1 : 1;
+  return (x, y) => ({
+    x: spec.anchor.x + along.x * x + out.x * sign * y,
+    y: spec.anchor.y + along.y * x + out.y * sign * y,
+  });
+}
+
+/**
+ * Lay a straight band's upright local bitmap — `|width| × |length|`, the sample
+ * line along its top — onto the document through the band's geometry: one
+ * affine blit for a plain rectangle, the cell mesh once it is skewed, bent or
+ * curved. Returns null when the shape is degenerate.
+ */
+export function placeBandLocal(
+  spec: StretchSpec,
+  local: HTMLCanvasElement,
+  crisp = false,
+  translucent = true,
+): BandRender | null {
+  const width = local.width;
+  const height = local.height;
   const { along, out } = rectBasis(spec);
   const flipped = spec.length < 0;
   // Local +y always points the way the band actually extrudes.
   const outSigned = { x: out.x * (flipped ? -1 : 1), y: out.y * (flipped ? -1 : 1) };
-
-  const local = createCanvas(width, height);
-  const lctx = local.getContext('2d')!;
-  // Every output row is the same row of colours; no resampling wanted.
-  lctx.imageSmoothingEnabled = false;
-  lctx.drawImage(samplePathStrip(source, spec.points, width, mask), 0, 0, width, 1, 0, 0, width, height);
-  shapeAlpha(local, spec);
 
   // Local (0,0) is the anchor on the path for either sign of `length` — the
   // side is carried entirely by `outSigned`, so the origin never moves.
@@ -390,9 +630,12 @@ export function renderStretchBand(spec: StretchSpec, source: Layer, subject: Lay
 
   const output = createCanvas(maxX - minX, maxY - minY);
   const octx = output.getContext('2d')!;
-  octx.imageSmoothingQuality = 'high';
+  if (crisp) octx.imageSmoothingEnabled = false;
+  else octx.imageSmoothingQuality = 'high';
 
-  if (mesh) {
+  if (mesh && translucent) {
+    drawPatchSeamless(octx, local, mesh, -minX, -minY, crisp);
+  } else if (mesh) {
     drawPatch(octx, local, mesh, -minX, -minY);
   } else {
     // Undistorted: one blit, columns of the matrix are the local axes.

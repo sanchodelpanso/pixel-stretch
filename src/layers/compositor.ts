@@ -1,6 +1,6 @@
 import type { LayerDocument } from '../types/layer';
 import { createCanvas } from './layer-utils';
-import { subjectBlendCanvas } from './subject-blend';
+import { subjectBlendRender } from './subject-blend';
 
 /** Shared by the checkerboard preview and full-resolution export. */
 export function drawDocumentLayers(ctx: CanvasRenderingContext2D, doc: LayerDocument): void {
@@ -8,7 +8,8 @@ export function drawDocumentLayers(ctx: CanvasRenderingContext2D, doc: LayerDocu
   for (const layer of doc.layers) {
     if (!layer.visible || layer.opacity <= 0) continue;
     ctx.globalAlpha = layer.opacity;
-    ctx.drawImage(subjectBlendCanvas(layer, doc), layer.x, layer.y);
+    const placed = subjectBlendRender(layer, doc);
+    ctx.drawImage(placed.canvas, placed.x, placed.y);
   }
   ctx.restore();
 }

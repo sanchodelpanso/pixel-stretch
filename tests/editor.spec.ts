@@ -60,6 +60,9 @@ test('opening a photo does not download models; HEIC preserves full resolution',
   await openPhoto(page);
   await expect(page.locator('.layer-dims')).toHaveText('4284 × 5712');
   expect(requests).toEqual([]);
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('.position-row .property-value')).toHaveText('0, 0');
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
 });
 
 test('Auto selects Pisa architecture, exports transparent PNG, and supports undo', async ({ page }) => {
@@ -100,7 +103,7 @@ test('Auto selects Pisa architecture, exports transparent PNG, and supports undo
   expect(errors).toEqual([]);
 });
 
-test('Tap and a single Brush stroke both produce a selection', async ({ page }) => {
+test('Tap selects an object and deselect returns to Stretch', async ({ page }) => {
   await openPhoto(page);
   await page.getByRole('button', { name: 'Tap', exact: true }).click();
   await expect(page.locator('.editor-canvas-wrapper')).toHaveAttribute('data-selection-ready', 'true');
@@ -110,26 +113,15 @@ test('Tap and a single Brush stroke both produce a selection', async ({ page }) 
   const bounds = (await canvas.boundingBox())!;
   await canvas.click({ position: { x: bounds.width * .34, y: bounds.height * .4 } });
   await waitSelection(page);
-  await page.getByRole('button', { name: 'Brush', exact: true }).click();
-  await expect(page.locator('.editor-canvas-wrapper')).toHaveAttribute('data-selection-ready', 'true');
-  await expect(page.locator('.brush-canvas')).toBeVisible();
-  await expect(page.locator('.editor-busy')).toHaveCount(0);
-  const brush = page.locator('.brush-canvas');
-  const dimensions = await brush.evaluate((element: HTMLCanvasElement) => ({ width: element.width, height: element.height }));
-  expect(dimensions.height).toBeGreaterThan(300);
-  await page.mouse.move(bounds.x + bounds.width * .34, bounds.y + bounds.height * .2);
-  await page.mouse.down();
-  await page.mouse.move(bounds.x + bounds.width * .36, bounds.y + bounds.height * .7, { steps: 12 });
-  await page.mouse.up();
-  await waitSelection(page);
-  await page.getByRole('button', { name: 'Clear', exact: true }).click();
+  await page.getByRole('button', { name: 'Deselect', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Stretch', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.selection-section')).toHaveCount(0);
 });
 
 test('switching away during inference cannot restore a stale selection', async ({ page }) => {
   await openPhoto(page);
   await page.getByRole('button', { name: 'Auto', exact: true }).click();
-  await page.getByRole('button', { name: 'Move', exact: true }).click();
+  await page.getByRole('button', { name: 'Stretch', exact: true }).click();
   await expect(page.locator('.editor-busy')).toHaveCount(0);
   await page.getByRole('button', { name: 'Tap', exact: true }).click();
   await expect(page.locator('.editor-canvas-wrapper')).toHaveAttribute('data-selection-ready', 'true');
@@ -189,7 +181,7 @@ test('project save and reopen preserves layers and stretch geometry', async ({ p
 
   // Curved mode starts flat and exposes the 2D Bézier controls. Pulling a
   // corner in this mode retains the existing localized paper-fold gesture.
-  await page.locator('.rect-mode').dispatchEvent('pointerdown', { pointerId: 2 });
+  await page.locator('.rect-mode').filter({ hasText: /^(Straight 2D skew|Curved shape)/ }).dispatchEvent('pointerdown', { pointerId: 2 });
   await expect(page.locator('.edge-control')).toHaveCount(8);
   const curvedCorner = page.locator('.rect-handle').nth(2);
   const curvedCornerBox = (await curvedCorner.boundingBox())!;
@@ -273,9 +265,9 @@ test('straight corners skew in 2D and curved controls start as a flat wave surfa
   await expect(page.locator('.rect-outline.warped')).toBeVisible();
   await expect(page.locator('.edge-control')).toHaveCount(0);
 
-  await page.locator('.rect-mode').dispatchEvent('pointerdown', { pointerId: 3 });
+  await page.locator('.rect-mode').filter({ hasText: /^(Straight 2D skew|Curved shape)/ }).dispatchEvent('pointerdown', { pointerId: 3 });
   await expect(page.locator('.edge-control')).toHaveCount(8);
-  await expect(page.locator('.rect-mode title')).toHaveText('Curved shape — click for straight 2D skew');
+  await expect(page.locator('.rect-mode').filter({ hasText: /^(Straight 2D skew|Curved shape)/ }).locator('title')).toHaveText('Curved shape — click for straight 2D skew');
 
   const control = page.locator('.edge-control').first();
   const controlBox = (await control.boundingBox())!;
@@ -365,7 +357,10 @@ test('mobile editor uses a touch toolbar and layers sheet without horizontal ove
 
   const toolbar = page.locator('.toolbar');
   const toolButtons = toolbar.locator('.tool-btn');
-  await expect(toolButtons).toHaveCount(6);
+  await expect(toolButtons).toHaveCount(4);
+  await expect(toolbar.getByRole('button', { name: 'Move', exact: true })).toHaveCount(0);
+  await expect(toolbar.getByRole('button', { name: 'Brush', exact: true })).toHaveCount(0);
+  await expect(toolbar.getByRole('button', { name: 'Stretch', exact: true })).toHaveAttribute('aria-pressed', 'true');
   for (const button of await toolButtons.all()) {
     const box = await button.boundingBox();
     expect(box?.width).toBeGreaterThanOrEqual(44);
@@ -382,7 +377,19 @@ test('mobile editor uses a touch toolbar and layers sheet without horizontal ove
   await expect(panel).not.toBeVisible();
   await page.getByRole('button', { name: 'Layers', exact: true }).click();
   await expect(panel).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Move Background up' })).toBeVisible();
+  // A single layer has no reorder action. Duplicating reveals touch-sized controls.
+  await expect(page.getByRole('button', { name: 'Move Background up' })).not.toBeVisible();
+  await page.getByRole('button', { name: 'Duplicate', exact: true }).click();
+  await expect(page.locator('.layer-row')).toHaveCount(2);
+  const moveDown = panel.getByRole('button', { name: /Move .+ down/ }).filter({ visible: true });
+  await expect(moveDown).toBeEnabled();
+  const orderBox = (await moveDown.boundingBox())!;
+  expect(orderBox.width).toBeGreaterThanOrEqual(44);
+  expect(orderBox.height).toBeGreaterThanOrEqual(44);
+  await moveDown.click();
+  await expect(panel.locator('.layer-row').last()).toHaveClass(/selected/);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(panel.locator('.layer-row').first()).toHaveClass(/selected/);
 
   await expect.poll(async () => {
     const panelBox = (await panel.boundingBox())!;
@@ -408,4 +415,89 @@ test('mobile upload screen fits the viewport and keeps its primary target touch-
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await mkdir('artifacts/mobile', { recursive: true });
   await page.screenshot({ path: 'artifacts/mobile/upload.png' });
+});
+
+
+test.describe('stretch properties on mobile', () => {
+  test.setTimeout(20_000);
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  // Pick an exposed pixel inside the band, away from its handles and color grip.
+  async function bodyPoint(page: import('@playwright/test').Page) {
+    return page.getByRole('button', { name: 'Stretch properties', exact: true }).evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      for (const x of [0.3, 0.7, 0.5]) {
+        for (const y of [0.3, 0.7, 0.5]) {
+          const point = { x: box.x + box.width * x, y: box.y + box.height * y };
+          if (document.elementFromPoint(point.x, point.y) === element) return point;
+        }
+      }
+      throw new Error('No exposed stretch body pixel');
+    });
+  }
+
+  for (const shape of ['Straight', 'Arc'] as const) {
+    test(`${shape}: tapping and dragging keep properties closed; double-tap opens them`, async ({ page }) => {
+      await openSyntheticStretch(page);
+      if (shape === 'Arc') {
+        await page.getByRole('group', { name: 'Band shape' }).getByRole('button', { name: shape }).click();
+      }
+      const panel = page.getByLabel('Layers and properties');
+      const body = page.getByRole('button', { name: 'Stretch properties', exact: true });
+      const before = await body.getAttribute('d');
+      const undoWasEnabled = await page.getByRole('button', { name: 'Undo', exact: true }).isEnabled();
+      await expect(panel).not.toBeVisible();
+      if (shape === 'Straight') {
+        await mkdir('artifacts/mobile', { recursive: true });
+        await page.screenshot({ path: 'artifacts/mobile/stretch-editing.png', animations: 'disabled' });
+      }
+
+      let point = await bodyPoint(page);
+      await page.touchscreen.tap(point.x, point.y);
+      await expect(panel).not.toBeVisible();
+      expect(await page.getByRole('button', { name: 'Undo', exact: true }).isEnabled()).toBe(undoWasEnabled);
+      await expect(body).toHaveAttribute('d', before!);
+
+      // A real drag changes the band without being mistaken for a tap.
+      await page.mouse.move(point.x, point.y);
+      await page.mouse.down();
+      await page.mouse.move(point.x + 18, point.y + 12, { steps: 5 });
+      await page.mouse.up();
+      await expect(body).not.toHaveAttribute('d', before!);
+      await expect(panel).not.toBeVisible();
+      await page.getByRole('button', { name: 'Undo', exact: true }).click();
+      await expect(body).toHaveAttribute('d', before!);
+      expect(await page.getByRole('button', { name: 'Undo', exact: true }).isEnabled()).toBe(undoWasEnabled);
+
+      point = await bodyPoint(page);
+      await page.touchscreen.tap(point.x, point.y);
+      await page.touchscreen.tap(point.x, point.y);
+      await expect(panel).toBeVisible();
+      await expect(page.getByLabel('Width')).toBeVisible();
+      if (shape === 'Straight') {
+        await page.screenshot({ path: 'artifacts/mobile/stretch-properties.png', animations: 'disabled' });
+      }
+      await page.getByRole('button', { name: 'Close panel' }).click();
+      await expect(panel).not.toBeVisible();
+
+      // Editing a handle after closing must not reopen the panel.
+      const handle = page.locator(shape === 'Arc' ? '.arc-width-handle' : '.rect-handle').first();
+      const grip = (await handle.boundingBox())!;
+      const shapeBefore = await body.getAttribute('d');
+      await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(grip.x + grip.width / 2 + 16, grip.y + grip.height / 2 + 12, { steps: 4 });
+      await page.mouse.up();
+      await expect(body).not.toHaveAttribute('d', shapeBefore!);
+      await expect(panel).not.toBeVisible();
+
+      // Mouse double-click also works, without changing the stretch geometry.
+      point = await bodyPoint(page);
+      await page.mouse.dblclick(point.x, point.y);
+      await expect(panel).toBeVisible();
+      await page.getByRole('button', { name: 'Edit path', exact: true }).click();
+      await expect(page.locator('.stretch-path-editor')).toBeVisible();
+      await expect(panel).not.toBeVisible();
+    });
+  }
 });
